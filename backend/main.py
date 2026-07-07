@@ -28,6 +28,7 @@ from config import settings
 from email_sender import send_email_with_pdfs
 from grnpush.router import router as grn_router
 from models import DownloadRequest, EmailRequest, EmailResponse
+from tds_summary.router import router as tds_router
 from zoho_client import MAX_WORKERS, _fetch_one, token_manager
 
 app = FastAPI(title="Zoho Credit Note Bulk Downloader")
@@ -45,6 +46,7 @@ app.add_middleware(
 )
 
 app.include_router(grn_router)
+app.include_router(tds_router)
 
 
 @app.get("/health")

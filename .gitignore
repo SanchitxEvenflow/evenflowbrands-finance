@@ -229,3 +229,4 @@ backend/__pycache__/
 .serena 
 backend/credentials.json
 backend/token.json
+frontend/out

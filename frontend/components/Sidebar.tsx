@@ -19,6 +19,7 @@ export default function Sidebar() {
         { name: "History", href: "/grn-push/history" },
       ]
     },
+    { name: "TDS Fetcher", href: "/tds-fetcher", icon: "🧾" },
   ];
 
   return (
