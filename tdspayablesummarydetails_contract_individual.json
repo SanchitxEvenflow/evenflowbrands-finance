@@ -1,0 +1,626 @@
+{
+  "code": 0,
+  "message": "success",
+  "tdspayablesummarydetails": [
+    {
+      "payment_id": "727927000219424032",
+      "payment_number": "BLR-25-26-00021",
+      "payment_date": "2026-06-21",
+      "vendor_id": "727927000175656001",
+      "vendor_name": "Anand Tata Ace",
+      "pan_no": "BNEPN1776N",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 78300.0,
+      "amount_paid": 77517.0,
+      "tax_amount_withheld": 783.0,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 783.0,
+      "tds_rate": 1.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000219440239",
+      "payment_number": "SRF127HR00009030",
+      "payment_date": "2026-06-10",
+      "vendor_id": "727927000000030427",
+      "vendor_name": "BigFoot Retail Solutions Pvt. Ltd.",
+      "pan_no": "AAECB7131Q",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 3403547.0,
+      "amount_paid": 3335476.06,
+      "tax_amount_withheld": 68070.94,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 68070.94,
+      "tds_rate": 2.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000218638349",
+      "payment_number": "BLR-25-26-00020",
+      "payment_date": "2026-06-09",
+      "vendor_id": "727927000175656001",
+      "vendor_name": "Anand Tata Ace",
+      "pan_no": "BNEPN1776N",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 50000.0,
+      "amount_paid": 49500.0,
+      "tax_amount_withheld": 500.0,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 500.0,
+      "tds_rate": 1.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000218643003",
+      "payment_number": "AK06260000001653",
+      "payment_date": "2026-06-09",
+      "vendor_id": "727927000204988222",
+      "vendor_name": "ZEPTO PRIVATE LIMITED",
+      "pan_no": "AAICK4821A",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 150000.0,
+      "amount_paid": 149925.0,
+      "tax_amount_withheld": 75.0,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 75.0,
+      "tds_rate": 0.05,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000218522159",
+      "payment_number": "AK06260000001539",
+      "payment_date": "2026-06-08",
+      "vendor_id": "727927000204988222",
+      "vendor_name": "ZEPTO PRIVATE LIMITED",
+      "pan_no": "AAICK4821A",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 293500.0,
+      "amount_paid": 293353.25,
+      "tax_amount_withheld": 146.75,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 146.75,
+      "tds_rate": 0.05,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000218544034",
+      "payment_number": "SRF127HR00003311",
+      "payment_date": "2026-06-08",
+      "vendor_id": "727927000000030427",
+      "vendor_name": "BigFoot Retail Solutions Pvt. Ltd.",
+      "pan_no": "AAECB7131Q",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 3231661.02,
+      "amount_paid": 3167027.8,
+      "tax_amount_withheld": 64633.22,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 64633.22,
+      "tds_rate": 2.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000218638397",
+      "payment_number": "13",
+      "payment_date": "2026-06-05",
+      "vendor_id": "727927000204511951",
+      "vendor_name": "Sri Basaveshwara Swamy Transport",
+      "pan_no": "MLYPS2504L",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 14400.0,
+      "amount_paid": 14256.0,
+      "tax_amount_withheld": 144.0,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 144.0,
+      "tds_rate": 1.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000218638424",
+      "payment_number": "14",
+      "payment_date": "2026-06-05",
+      "vendor_id": "727927000204511951",
+      "vendor_name": "Sri Basaveshwara Swamy Transport",
+      "pan_no": "MLYPS2504L",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 15850.0,
+      "amount_paid": 15691.5,
+      "tax_amount_withheld": 158.5,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 158.5,
+      "tds_rate": 1.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000218638453",
+      "payment_number": "15",
+      "payment_date": "2026-06-05",
+      "vendor_id": "727927000204511951",
+      "vendor_name": "Sri Basaveshwara Swamy Transport",
+      "pan_no": "MLYPS2504L",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 16380.0,
+      "amount_paid": 16216.2,
+      "tax_amount_withheld": 163.8,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 163.8,
+      "tds_rate": 1.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000218837553",
+      "payment_number": "FKNADI27/0012770",
+      "payment_date": "2026-06-03",
+      "vendor_id": "727927000010006425",
+      "vendor_name": "Flipkart Ads",
+      "pan_no": "AACCF0683K",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 92945.61,
+      "amount_paid": 91086.7,
+      "tax_amount_withheld": 1858.91,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 1858.91,
+      "tds_rate": 2.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000218837585",
+      "payment_number": "FKNADI27/0012816",
+      "payment_date": "2026-06-03",
+      "vendor_id": "727927000010006425",
+      "vendor_name": "Flipkart Ads",
+      "pan_no": "AACCF0683K",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 66759.85,
+      "amount_paid": 65424.65,
+      "tax_amount_withheld": 1335.2,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 1335.2,
+      "tds_rate": 2.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000218837628",
+      "payment_number": "FKNADI27/0012822",
+      "payment_date": "2026-06-03",
+      "vendor_id": "727927000010006425",
+      "vendor_name": "Flipkart Ads",
+      "pan_no": "AACCF0683K",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 40855.31,
+      "amount_paid": 40038.2,
+      "tax_amount_withheld": 817.11,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 817.11,
+      "tds_rate": 2.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000218837660",
+      "payment_number": "FKNADI27/0012890",
+      "payment_date": "2026-06-03",
+      "vendor_id": "727927000010006425",
+      "vendor_name": "Flipkart Ads",
+      "pan_no": "AACCF0683K",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 60743.21,
+      "amount_paid": 59528.35,
+      "tax_amount_withheld": 1214.86,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 1214.86,
+      "tds_rate": 2.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000218837692",
+      "payment_number": "FKNADI27/0012903",
+      "payment_date": "2026-06-03",
+      "vendor_id": "727927000010006425",
+      "vendor_name": "Flipkart Ads",
+      "pan_no": "AACCF0683K",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 14941.08,
+      "amount_paid": 14642.26,
+      "tax_amount_withheld": 298.82,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 298.82,
+      "tds_rate": 2.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000218837746",
+      "payment_number": "FKNADI27/0012911",
+      "payment_date": "2026-06-03",
+      "vendor_id": "727927000010006425",
+      "vendor_name": "Flipkart Ads",
+      "pan_no": "AACCF0683K",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 351068.8,
+      "amount_paid": 344047.42,
+      "tax_amount_withheld": 7021.38,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 7021.38,
+      "tds_rate": 2.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000218837778",
+      "payment_number": "FKNADI27/0013121",
+      "payment_date": "2026-06-03",
+      "vendor_id": "727927000010006425",
+      "vendor_name": "Flipkart Ads",
+      "pan_no": "AACCF0683K",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 115197.86,
+      "amount_paid": 112893.9,
+      "tax_amount_withheld": 2303.96,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 2303.96,
+      "tds_rate": 2.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000218231589",
+      "payment_number": "BLR-26-27-TCI016",
+      "payment_date": "2026-06-02",
+      "vendor_id": "727927000208980327",
+      "vendor_name": "Transcare Carrying India",
+      "pan_no": "CXGPG5350J",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 176500.0,
+      "amount_paid": 174735.0,
+      "tax_amount_withheld": 1765.0,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 1765.0,
+      "tds_rate": 1.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000218264579",
+      "payment_number": "27915100078300",
+      "payment_date": "2026-06-02",
+      "vendor_id": "727927000020349463",
+      "vendor_name": "AMAZON SELLER SERVICES PVT LTD",
+      "pan_no": "AAICA3918J",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 295602.73,
+      "amount_paid": 289690.68,
+      "tax_amount_withheld": 5912.05,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 5912.05,
+      "tds_rate": 2.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000218264611",
+      "payment_number": "27915100078580",
+      "payment_date": "2026-06-02",
+      "vendor_id": "727927000020349463",
+      "vendor_name": "AMAZON SELLER SERVICES PVT LTD",
+      "pan_no": "AAICA3918J",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 1074990.1,
+      "amount_paid": 1053490.3,
+      "tax_amount_withheld": 21499.8,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 21499.8,
+      "tds_rate": 2.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000219697075",
+      "payment_number": "27915100074444",
+      "payment_date": "2026-06-02",
+      "vendor_id": "727927000020349463",
+      "vendor_name": "AMAZON SELLER SERVICES PVT LTD",
+      "pan_no": "AAICA3918J",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 1172084.94,
+      "amount_paid": 1148643.24,
+      "tax_amount_withheld": 23441.7,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 23441.7,
+      "tds_rate": 2.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000219697107",
+      "payment_number": "27915100074426",
+      "payment_date": "2026-06-02",
+      "vendor_id": "727927000020349463",
+      "vendor_name": "AMAZON SELLER SERVICES PVT LTD",
+      "pan_no": "AAICA3918J",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 1119623.25,
+      "amount_paid": 1097230.78,
+      "tax_amount_withheld": 22392.47,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 22392.47,
+      "tds_rate": 2.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000219697139",
+      "payment_number": "27915100074313",
+      "payment_date": "2026-06-02",
+      "vendor_id": "727927000020349463",
+      "vendor_name": "AMAZON SELLER SERVICES PVT LTD",
+      "pan_no": "AAICA3918J",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 732754.13,
+      "amount_paid": 718099.05,
+      "tax_amount_withheld": 14655.08,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 14655.08,
+      "tds_rate": 2.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000219697171",
+      "payment_number": "27915100074270",
+      "payment_date": "2026-06-02",
+      "vendor_id": "727927000020349463",
+      "vendor_name": "AMAZON SELLER SERVICES PVT LTD",
+      "pan_no": "AAICA3918J",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 21942.53,
+      "amount_paid": 21503.68,
+      "tax_amount_withheld": 438.85,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 438.85,
+      "tds_rate": 2.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000219697203",
+      "payment_number": "27915100073644",
+      "payment_date": "2026-06-02",
+      "vendor_id": "727927000020349463",
+      "vendor_name": "AMAZON SELLER SERVICES PVT LTD",
+      "pan_no": "AAICA3918J",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 31221.37,
+      "amount_paid": 30596.94,
+      "tax_amount_withheld": 624.43,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 624.43,
+      "tds_rate": 2.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000219697235",
+      "payment_number": "27915100073609",
+      "payment_date": "2026-06-02",
+      "vendor_id": "727927000020349463",
+      "vendor_name": "AMAZON SELLER SERVICES PVT LTD",
+      "pan_no": "AAICA3918J",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 167044.15,
+      "amount_paid": 163703.27,
+      "tax_amount_withheld": 3340.88,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 3340.88,
+      "tds_rate": 2.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    },
+    {
+      "payment_id": "727927000219697267",
+      "payment_number": "27915100074540",
+      "payment_date": "2026-06-02",
+      "vendor_id": "727927000020349463",
+      "vendor_name": "AMAZON SELLER SERVICES PVT LTD",
+      "pan_no": "AAICA3918J",
+      "transaction_type": "bill",
+      "amount_paid_without_tds_deduction": 601877.8,
+      "amount_paid": 589840.24,
+      "tax_amount_withheld": 12037.56,
+      "tds_surcharge": 0.0,
+      "tds_cess": 0.0,
+      "total_tax_amount_withheld": 12037.56,
+      "tds_rate": 2.0,
+      "deduction_reason": "",
+      "branch": {
+        "branch_name": "Karnataka"
+      }
+    }
+  ],
+  "page_context": {
+    "page": 1,
+    "per_page": 500,
+    "total": 26,
+    "total_pages": 1,
+    "has_more_page": false,
+    "report_name": "TDS Details for Vendor",
+    "can_show_reports_banner": false,
+    "can_schedule": false,
+    "report_basis": "Accrual",
+    "report_type": "tds_payable_summary_details",
+    "applied_filter": "PaymentDate.PreviousMonth",
+    "from_date": "2026-06-01",
+    "to_date": "2026-06-30",
+    "is_for_date_range": "true",
+    "cash_based": "false",
+    "last_accessed_time_formatted": "07/07/2026 01:15 PM",
+    "select_columns": [
+      {
+        "field": "vendor_name",
+        "group": "report"
+      },
+      {
+        "field": "pan_no",
+        "group": "report"
+      },
+      {
+        "field": "branch_name",
+        "group": "branch"
+      },
+      {
+        "field": "payment_date",
+        "group": "report"
+      },
+      {
+        "field": "payment_number",
+        "group": "report"
+      },
+      {
+        "field": "transaction_type",
+        "group": "report"
+      },
+      {
+        "field": "section",
+        "group": "report"
+      },
+      {
+        "field": "deduction_reason",
+        "group": "report"
+      },
+      {
+        "field": "tds_rate",
+        "group": "report"
+      },
+      {
+        "field": "amount_paid",
+        "group": "report"
+      },
+      {
+        "field": "amount_paid_without_tds_deduction",
+        "group": "report"
+      },
+      {
+        "field": "tax_amount_withheld",
+        "group": "report"
+      },
+      {
+        "field": "tds_surcharge",
+        "group": "report"
+      },
+      {
+        "field": "tds_cess",
+        "group": "report"
+      },
+      {
+        "field": "total_tax_amount_withheld",
+        "group": "report"
+      }
+    ],
+    "group_by": [
+      {
+        "field": "none",
+        "group": "report"
+      }
+    ],
+    "filter_by": "PaymentDate.PreviousMonth",
+    "is_period_basis": "false",
+    "sort_column": "payment_date",
+    "sort_order": "D",
+    "sum_columns": {
+      "amount_paid": 13134157.47,
+      "amount_paid_formatted": "\u20b91,31,34,157.47",
+      "amount_paid_without_tds_deduction": 13389790.74,
+      "amount_paid_without_tds_deduction_formatted": "\u20b91,33,89,790.74",
+      "tax_amount_withheld": 255633.27,
+      "tax_amount_withheld_formatted": "\u20b92,55,633.27",
+      "total_tax_amount_withheld": 255633.27,
+      "total_tax_amount_withheld_formatted": "\u20b92,55,633.27"
+    }
+  }
+}
