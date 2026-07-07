@@ -1,10 +1,10 @@
-import csv
 import io
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
+from openpyxl import Workbook
 from pydantic import BaseModel
 
 from tds_summary.summary_fetcher import fetch_entity
@@ -43,8 +43,8 @@ def get_summary(body: TdsRequest):
     return {"entities": entities, "consolidated": _consolidated(entities)}
 
 
-@router.post("/csv")
-def get_csv(body: TdsRequest) -> StreamingResponse:
+@router.post("/xlsx")
+def get_xlsx(body: TdsRequest) -> StreamingResponse:
     entities = _fetch_all_entities(body)
 
     rows: list[dict] = []
@@ -66,14 +66,18 @@ def get_csv(body: TdsRequest) -> StreamingResponse:
                     if key not in columns:
                         columns.append(key)
 
-    buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=columns)
-    writer.writeheader()
-    writer.writerows(rows)
+    wb = Workbook()
+    ws = wb.active
+    ws.append(columns)
+    for row in rows:
+        ws.append([row.get(col) for col in columns])
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
     buffer.seek(0)
 
     return StreamingResponse(
-        iter([buffer.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=tds_summary_{body.from_date}_to_{body.to_date}.csv"},
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=tds_summary_{body.from_date}_to_{body.to_date}.xlsx"},
     )

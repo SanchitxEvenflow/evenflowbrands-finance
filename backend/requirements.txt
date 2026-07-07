@@ -16,3 +16,6 @@ rapidfuzz==3.14.5
 
 # Email sending (credit notes)
 resend==2.32.2
+
+# XLSX export (TDS fetcher)
+openpyxl==3.1.5

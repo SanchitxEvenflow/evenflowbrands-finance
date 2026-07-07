@@ -100,7 +100,7 @@ export default function TdsFetcherPage() {
     }
   };
 
-  const downloadCsv = async () => {
+  const downloadXlsx = async () => {
     if (selectedOrgIds.length === 0) {
       setErrorMsg("Select at least one entity");
       return;
@@ -108,7 +108,7 @@ export default function TdsFetcherPage() {
     setDownloading(true);
     setErrorMsg(null);
     try {
-      const res = await fetch(`${API_BASE}/tds/csv`, {
+      const res = await fetch(`${API_BASE}/tds/xlsx`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(buildBody()),
@@ -118,7 +118,7 @@ export default function TdsFetcherPage() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `tds_summary_${startDate}_to_${endDate}.csv`;
+      a.download = `tds_summary_${startDate}_to_${endDate}.xlsx`;
       a.click();
       window.URL.revokeObjectURL(url);
     } catch (err: unknown) {
@@ -211,11 +211,11 @@ export default function TdsFetcherPage() {
 
             <div className="flex flex-col gap-3 lg:items-end">
               <button
-                onClick={downloadCsv}
+                onClick={downloadXlsx}
                 disabled={loading || downloading}
                 className="px-6 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-semibold rounded-xl transition-all disabled:opacity-50 shadow-md hover:shadow-lg whitespace-nowrap lg:mt-7"
               >
-                {downloading ? "Downloading..." : "⬇ Download CSV"}
+                {downloading ? "Downloading..." : "⬇ Download XLSX"}
               </button>
               <button
                 onClick={fetchSummary}
