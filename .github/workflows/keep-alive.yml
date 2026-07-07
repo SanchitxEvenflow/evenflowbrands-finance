@@ -1,13 +1,30 @@
-name: Keep Render Alive
+name: Keep Render Service Alive
 
 on:
   schedule:
-    - cron: '*/14 * * * *'
+    # Changed to 11 minutes to comfortably beat Render's 15-minute window even with GitHub delays
+    - cron: '*/11 * * * *'
   workflow_dispatch:
 
 jobs:
   ping:
+    name: Ping API
     runs-on: ubuntu-latest
     steps:
       - name: Ping Render service
-        run: curl --fail ${{ secrets.RENDER_URL }}/health
+        run: |
+          echo "Pinging Render service at $(date -u)"
+          
+          # Increased max-time to 60s to allow for cold starts
+          # Added '|| true' so a curl timeout doesn't instantly crash the GH step
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "${{ secrets.RENDER_URL }}/health" || echo "TIMEOUT")
+          
+          echo "Response status: $STATUS"
+          
+          if [ "$STATUS" = "200" ]; then
+            echo "✅ Service is alive and kicking"
+          elif [ "$STATUS" = "TIMEOUT" ]; then
+            echo "⚠️ Curl timed out. Render was likely asleep and cold-starting."
+          else
+            echo "⚠️ Unexpected status code: $STATUS"
+          fi
