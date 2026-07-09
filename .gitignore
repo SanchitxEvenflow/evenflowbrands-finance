@@ -229,4 +229,7 @@ backend/__pycache__/
 .serena 
 backend/credentials.json
 backend/token.json
-frontend/out
+frontend/out.dual-graph/
+CLAUDE.md
+.tokensave
+.dual-graph
