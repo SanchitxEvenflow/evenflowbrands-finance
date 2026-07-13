@@ -1,16 +1,16 @@
 import logging
-import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from fastapi import APIRouter, File, HTTPException, UploadFile
+from pydantic import BaseModel, Field
 
 from config import settings
-from grn_log import LogEntry, append_entries, mark_pdf_attached, read_log
-from grnpush.gmail_pdf import download_attachment, fetch_grn_pdfs
+from grn_log import LogEntry, append_entries, read_log
+from grnpush import store
 from grnpush.mapper import BillGroup, build_bill_payload, group_grns
+from grnpush.slack_notify import notify as slack_notify
 from grnpush.unicommerce_client import unicommerce
 from grnpush.zoho_bill_client import zoho_bill
 
@@ -18,474 +18,234 @@ logger = logging.getLogger("grn_push")
 
 router = APIRouter(prefix="/grn-push", tags=["grn-push"])
 
-DEFAULT_FACILITIES = ["EL_BLR_APEX", "EL_BLR_APEX_QC", "EL_VIRTUAL_BLR"]
+# GRNs are only pulled from the virtual warehouse facility.
+FACILITY = "EL_VIRTUAL_BLR"
 
-
-# ── Step 1 ────────────────────────────────────────────────────────────────────
-
-class ReceiptsRequest(BaseModel):
-    start: str
-    end: str
-
-
-class ReceiptItem(BaseModel):
-    grn_code: str
-    facility: str
-
-
-class ReceiptsResponse(BaseModel):
-    receipts: list[ReceiptItem]
-    errors: list[str] = []
-
-
-# ── Step 2 ────────────────────────────────────────────────────────────────────
-
-class FetchDetailsRequest(BaseModel):
-    receipts: list[ReceiptItem]
-
-
-class FetchDetailsResponse(BaseModel):
-    bills: list[BillGroup]
-
-
-# ── Step 3 ────────────────────────────────────────────────────────────────────
-
-class CreateBillsRequest(BaseModel):
-    bills: list[BillGroup]
-
-
-class BillResult(BaseModel):
-    bill_number: str
-    vendor_name: str = ""
-    grn_codes: list[str] = []
-    items_count: int = 0
-    total_value: float = 0.0
-    will_skip: bool = False
-    status: str
-    bill_id: Optional[str] = None
-    pdf_attached: bool = False
-    error: Optional[str] = None
-
-
-class CreateBillsResponse(BaseModel):
-    total: int
-    ok: int
-    failed: int
-    results: list[BillResult]
-
-
-# ── Endpoints ─────────────────────────────────────────────────────────────────
-
-@router.post("/receipts", response_model=ReceiptsResponse, summary="Step 1 — List GRN codes from Unicommerce")
-def get_receipts(body: ReceiptsRequest) -> ReceiptsResponse:
-    _check_unicommerce_config()
-    receipts: list[ReceiptItem] = []
-    errors: list[str] = []
-
-    for facility in DEFAULT_FACILITIES:
-        logger.info("Listing GRNs for %s from %s to %s", facility, body.start, body.end)
-        try:
-            codes = unicommerce.get_inflow_receipts_range(body.start, body.end, facility)
-            for code in codes:
-                receipts.append(ReceiptItem(grn_code=code, facility=facility))
-        except Exception as exc:
-            msg = f"{facility}: {exc}"
-            logger.error("Failed to list GRNs — %s", msg)
-            errors.append(msg)
-
-    return ReceiptsResponse(receipts=receipts, errors=errors)
-
-
-@router.post("/fetch-details", response_model=FetchDetailsResponse, summary="Step 2 — Fetch GRN details and group by bill number")
-def fetch_details(body: FetchDetailsRequest) -> FetchDetailsResponse:
-    _check_unicommerce_config()
-    grns: list[tuple[dict, str]] = []
-
-    for item in body.receipts:
-        try:
-            grn = unicommerce.get_inflow_receipt(item.grn_code, item.facility)
-            grns.append((grn, item.facility))
-        except Exception as exc:
-            logger.error("Failed to fetch GRN %s: %s", item.grn_code, exc)
-
-    bills = group_grns(grns)
-
-    all_grn_codes = [item.grn_code for item in body.receipts]
-    gmail_refs = fetch_grn_pdfs(all_grn_codes)
-    for bill in bills:
-        bill.grn_gmail_attachments = {
-            code: gmail_refs[code]
-            for code in bill.grn_codes
-            if code in gmail_refs
-        }
-
-    logger.info("Grouped %d GRN(s) into %d bill(s)", len(grns), len(bills))
-    return FetchDetailsResponse(bills=bills)
-
-
+# Bills matching these keywords in the vendor invoice number are internal
+# stock movements, not real vendor purchases — never queued, never billed.
 _SKIP_KEYWORDS = {"kitting", "dekitting", "return"}
 
+MAX_DETAIL_WORKERS = 5
 
-def _should_skip(group: "BillGroup") -> bool:
-    bill_lower = group.bill_number.lower()
+
+def _should_skip(bill_number: str) -> bool:
+    bill_lower = bill_number.lower()
     return any(kw in bill_lower for kw in _SKIP_KEYWORDS)
 
 
-@router.post("/create-bills", response_model=CreateBillsResponse, summary="Step 3 — Push grouped bills as drafts to Zoho")
-def create_bills(body: CreateBillsRequest) -> CreateBillsResponse:
-    results: list[BillResult] = []
-
-    for group in body.bills:
-        total_value = sum(i.get("quantity", 0) * i.get("rate", 0) for i in group.line_items)
-        base = BillResult(
-            bill_number=group.bill_number,
-            vendor_name=group.vendor_name,
-            grn_codes=group.grn_codes,
-            items_count=len(group.line_items),
-            total_value=total_value,
-            will_skip=_should_skip(group),
-            status="",
+def _check_unicommerce_config() -> None:
+    if not settings.unicommerce_username or not settings.unicommerce_password:
+        raise HTTPException(
+            status_code=503,
+            detail="UNICOMMERCE_USERNAME / UNICOMMERCE_PASSWORD not configured in .env",
         )
-        if _should_skip(group):
-            logger.info("Skipping bill %r (kitting/dekitting/return)", group.bill_number)
-            base.status = "skipped"
-            results.append(base)
-            continue
-
-        log_by_grn = {e.grn_code: e for e in read_log()}
-        try:
-            existing = zoho_bill.find_bill(group.bill_number)
-            if existing:
-                bill_id = existing["bill_id"]
-                bill_date = existing["date"]
-                new_entries = []
-                for grn_code in group.grn_codes:
-                    if grn_code not in log_by_grn:
-                        new_entries.append(LogEntry(
-                            grn_code=grn_code,
-                            bill_number=group.bill_number,
-                            bill_id=bill_id,
-                            pdf_attached=False,
-                            created_at=bill_date or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                        ))
-                if new_entries:
-                    append_entries(new_entries)
-                    log_by_grn.update({e.grn_code: e for e in new_entries})
-                pdf_attached = all(log_by_grn.get(c) and log_by_grn[c].pdf_attached for c in group.grn_codes)
-                logger.info("Bill %r already exists in Zoho (bill_id=%s)", group.bill_number, bill_id)
-                base.status = "existing"
-                base.bill_id = bill_id
-                base.pdf_attached = pdf_attached
-                results.append(base)
-                continue
-
-            vendor_id = zoho_bill.find_vendor_id(group.vendor_code, group.vendor_name, group.vendor_gst)
-            if not vendor_id:
-                raise ValueError(f"Zoho vendor not found: {group.vendor_code!r}")
-
-            is_interstate = zoho_bill.is_interstate_vendor(vendor_id)
-            skus = {item.get("sku", "") for item in group.line_items if item.get("sku")}
-            item_meta_map = {sku: zoho_bill.find_item_metadata(sku) for sku in skus}
-            payload = build_bill_payload(group, vendor_id, item_meta_map, is_interstate)
-            bill = zoho_bill.create_draft_bill(payload)
-            bill_id = bill["bill_id"]
-
-            if group.grn_gmail_attachments:
-                try:
-                    attach_files = [
-                        (ref.filename, download_attachment(ref.message_id, ref.attachment_id))
-                        for ref in group.grn_gmail_attachments.values()
-                    ]
-                    zoho_bill.attach_pdf(bill_id, attach_files)
-                except Exception as attach_exc:
-                    logger.warning("PDF attach failed for bill %s: %s", bill_id, attach_exc)
-
-            base.status = "ok"
-            base.bill_id = bill_id
-            results.append(base)
-        except Exception as exc:
-            logger.error("Bill %s failed: %s", group.bill_number, exc)
-            base.status = "error"
-            base.error = str(exc)
-            results.append(base)
-
-    ok = sum(1 for r in results if r.status == "ok")
-    skipped = sum(1 for r in results if r.status == "skipped")
-    return CreateBillsResponse(total=len(results), ok=ok, failed=len(results) - ok - skipped, results=results)
 
 
-@router.get("/fetch-pdf/{grn_code}", summary="Fetch vendor invoice PDF from Gmail for a GRN code")
-def fetch_pdf(grn_code: str) -> StreamingResponse:
-    refs = fetch_grn_pdfs([grn_code])
-    if grn_code not in refs:
-        raise HTTPException(status_code=404, detail=f"No email with PDF found for GRN {grn_code!r}")
-    ref = refs[grn_code]
-    pdf_bytes = download_attachment(ref.message_id, ref.attachment_id)
-    return StreamingResponse(
-        iter([pdf_bytes]),
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{ref.filename}"'},
-    )
+class ReceiptsRequest(BaseModel):
+    start: str = Field(..., description="YYYY-MM-DD or DD/MM/YYYY")
+    end: str = Field(..., description="YYYY-MM-DD or DD/MM/YYYY")
 
 
-# ── One-click run ─────────────────────────────────────────────────────────────
-
-class RunRequest(BaseModel):
-    start: str
-    end: str
+class FetchDetailsRequest(BaseModel):
+    codes: list[str] = Field(..., min_length=1)
 
 
-class RunResponse(BaseModel):
-    total: int
-    ok: int
-    failed: int
-    skipped: int
-    results: list[BillResult]
+class QueuePatchRequest(BaseModel):
+    line_items: list[dict] | None = None
+    vendor_name: str | None = None
+    vendor_gst: str | None = None
+    po_code: str | None = None
 
 
-@router.post("/run", response_model=RunResponse, summary="One-click — list GRNs, group, and push bills to Zoho")
-def run_pipeline(body: RunRequest) -> RunResponse:
+@router.post("/receipts", summary="Step 1 — list GRN codes created in a date range")
+def list_receipts(payload: ReceiptsRequest):
     _check_unicommerce_config()
+    codes = unicommerce.get_inflow_receipts_range(payload.start, payload.end, FACILITY)
+    return {"facility": FACILITY, "codes": codes}
 
-    # Step 1: collect GRN codes across all facilities
-    receipts: list[ReceiptItem] = []
-    for facility in DEFAULT_FACILITIES:
-        try:
-            codes = unicommerce.get_inflow_receipts_range(body.start, body.end, facility)
-            for code in codes:
-                receipts.append(ReceiptItem(grn_code=code, facility=facility))
-        except Exception as exc:
-            logger.error("Failed listing GRNs for %s: %s", facility, exc)
 
-    if not receipts:
-        return RunResponse(total=0, ok=0, failed=0, skipped=0, results=[])
+def _fetch_one(code: str) -> tuple[str, dict | None, str | None]:
+    try:
+        return code, unicommerce.get_inflow_receipt(code, FACILITY), None
+    except Exception as exc:
+        logger.exception("Failed fetching GRN detail %s", code)
+        return code, None, str(exc)
 
-    # Step 2: fetch GRN details + group by bill number
-    grns: list[tuple[dict, str]] = []
-    for item in receipts:
-        try:
-            grn = unicommerce.get_inflow_receipt(item.grn_code, item.facility)
-            grns.append((grn, item.facility))
-        except Exception as exc:
-            logger.error("Failed fetching GRN %s: %s", item.grn_code, exc)
 
-    bills = group_grns(grns)
+@router.post("/fetch-details", summary="Step 2 — fetch GRN detail, group by vendor invoice number, merge into queue")
+def fetch_details(payload: FetchDetailsRequest):
+    _check_unicommerce_config()
+    with ThreadPoolExecutor(max_workers=MAX_DETAIL_WORKERS) as executor:
+        futures = [executor.submit(_fetch_one, code) for code in payload.codes]
+        results = [f.result() for f in as_completed(futures)]
 
-    # Step 3: create bills in Zoho + write log
-    results: list[BillResult] = []
-    log_entries: list[LogEntry] = []
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    log_by_grn = {e.grn_code: e for e in read_log()}
+    order = {code: i for i, code in enumerate(payload.codes)}
+    results.sort(key=lambda r: order[r[0]])
 
-    for group in bills:
-        total_value = sum(i.get("quantity", 0) * i.get("rate", 0) for i in group.line_items)
-        base = BillResult(
-            bill_number=group.bill_number,
-            vendor_name=group.vendor_name,
-            grn_codes=group.grn_codes,
-            items_count=len(group.line_items),
-            total_value=total_value,
-            will_skip=_should_skip(group),
-            status="",
+    receipts = [{"code": code, "detail": detail} for code, detail, err in results if err is None]
+    errors = [{"code": code, "error": err} for code, _, err in results if err]
+
+    grns = [(r["detail"], FACILITY) for r in receipts]
+    groups = group_grns(grns)
+
+    # Kitting/dekitting/return invoice numbers are internal stock moves, not
+    # real vendor bills — never enter the queue at all.
+    skipped = [g.bill_number for g in groups if _should_skip(g.bill_number)]
+    groups = [g for g in groups if not _should_skip(g.bill_number)]
+
+    queued = [store.upsert_merged(g).bill_number for g in groups]
+
+    # A failed GRN detail fetch means we don't know its vendor invoice number,
+    # so we can't tell which queue entry (if any) it belonged to. Flag every
+    # entry touched in this same batch rather than silently leaving them
+    # looking complete — a bill built from a partial fetch is a financial-data bug.
+    if errors and queued:
+        failed_codes = ", ".join(e["code"] for e in errors)
+        note = f"Fetch batch had {len(errors)} failed GRN(s) — {failed_codes}. Re-run fetch-details for these codes before pushing."
+        for bill_number in queued:
+            store.patch(bill_number, status="fetch_incomplete", issues=[note])
+
+    return {"facility": FACILITY, "receipts": receipts, "errors": errors, "queued": queued, "skipped": skipped}
+
+
+@router.get("/queue")
+def list_queue():
+    """All pending (not yet pushed) GRN groups, keyed by vendor invoice number."""
+    return store.load_all()
+
+
+@router.patch("/queue/{bill_number:path}")
+def edit_queue_entry(bill_number: str, payload: QueuePatchRequest):
+    fields = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not fields:
+        raise HTTPException(status_code=422, detail="No fields to update")
+    try:
+        return store.patch(bill_number, **fields)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"No pending entry for {bill_number}")
+
+
+@router.delete("/queue/{bill_number:path}")
+def discard_queue_entry(bill_number: str):
+    store.delete(bill_number)
+    return {"deleted": bill_number}
+
+
+def _log_grn_codes(grn_codes: list[str], bill_number: str, bill_id: str, created_at: str | None = None) -> None:
+    created_at = created_at or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    existing_codes = {e.grn_code for e in read_log()}
+    new_entries = [
+        LogEntry(grn_code=code, bill_number=bill_number, bill_id=bill_id, created_at=created_at)
+        for code in grn_codes
+        if code not in existing_codes
+    ]
+    if new_entries:
+        append_entries(new_entries)
+
+
+@router.post("/queue/{bill_number:path}/push")
+def push_bill(bill_number: str, invoice_pdf: UploadFile | None = File(None)):
+    """Resolve vendor + SKUs against Zoho, create the draft Bill, attach the PDF if given,
+    and drop the entry from the queue on success."""
+    entry = store.get(bill_number)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"No pending entry for {bill_number}")
+
+    if entry.get("status") == "fetch_incomplete":
+        raise HTTPException(
+            status_code=422,
+            detail=f"GRN push blocked for {bill_number}: last fetch had failures, entry may be missing line items — re-run fetch-details first.",
         )
-        if _should_skip(group):
-            base.status = "skipped"
-            results.append(base)
-            continue
 
+    # Vendor resolution — needed before the duplicate check below so a
+    # same-numbered bill belonging to a different vendor isn't mistaken for
+    # this one. A low-confidence match still pushes, just gets flagged for review.
+    vendor_id, method, score = zoho_bill.find_vendor_id(entry["vendor_code"], entry["vendor_name"], entry["vendor_gst"])
+    if vendor_id is None:
+        message = f"GRN push blocked for {bill_number}: no Zoho vendor match for '{entry['vendor_name']}'"
+        store.patch(bill_number, status="vendor_flagged", issues=[message])
+        slack_notify(message)
+        raise HTTPException(status_code=422, detail=message)
+    if method not in ("gst", "exact_name"):
+        slack_notify(
+            f"GRN {bill_number}: vendor matched via '{method}' (score {score:.0f}) — "
+            f"'{entry['vendor_name']}' → Zoho contact {vendor_id}. Please verify."
+        )
+
+    # Zoho-side duplicate check — this bill may already exist from a prior push
+    # (e.g. queue was rebuilt after a crash). Scoped to vendor_id so a same-numbered
+    # bill from a different vendor doesn't get mistaken for this one. If it does
+    # match, just backfill the audit log and clear the queue entry rather than
+    # creating a second bill.
+    existing = zoho_bill.find_bill(bill_number, vendor_id)
+    if existing:
+        _log_grn_codes(entry["grn_codes"], bill_number, existing["bill_id"], existing.get("date"))
+        store.delete(bill_number)
+        return {
+            "bill_id": existing["bill_id"],
+            "bill_number": bill_number,
+            "vendor_match_method": "existing",
+            "attachment_error": None,
+        }
+
+    # SKU resolution — any miss blocks the push entirely.
+    item_meta_map: dict[str, dict | None] = {}
+    missing_skus: list[str] = []
+    for item in entry["line_items"]:
+        sku = item.get("sku", "")
+        meta = zoho_bill.find_item_metadata(sku) if sku else None
+        if meta is None:
+            missing_skus.append(sku or "(blank)")
+        else:
+            item_meta_map[sku] = meta
+
+    if missing_skus:
+        message = f"GRN push blocked for {bill_number}: SKU(s) not found in Zoho — {', '.join(missing_skus)}"
+        store.patch(bill_number, status="sku_flagged", issues=[f"SKU not found in Zoho: {s}" for s in missing_skus])
+        slack_notify(message)
+        raise HTTPException(status_code=422, detail=message)
+
+    group = BillGroup(**{k: v for k, v in entry.items() if k in BillGroup.model_fields})
+    is_interstate = zoho_bill.is_interstate_vendor(vendor_id)
+    payload = build_bill_payload(group, vendor_id, item_meta_map, is_interstate)
+
+    try:
+        bill = zoho_bill.create_draft_bill(payload)
+    except Exception as exc:
+        logger.exception("Bill creation failed for %s", bill_number)
+        raise HTTPException(status_code=502, detail=f"Zoho bill creation failed: {exc}")
+
+    attachment_error = None
+    if invoice_pdf is not None:
+        content = invoice_pdf.file.read()
         try:
-            existing = zoho_bill.find_bill(group.bill_number)
-            if existing:
-                bill_id = existing["bill_id"]
-                bill_date = existing["date"]
-                for grn_code in group.grn_codes:
-                    if grn_code not in log_by_grn:
-                        entry = LogEntry(
-                            grn_code=grn_code,
-                            bill_number=group.bill_number,
-                            bill_id=bill_id,
-                            pdf_attached=False,
-                            created_at=bill_date or today,
-                        )
-                        log_entries.append(entry)
-                        log_by_grn[grn_code] = entry
-                pdf_attached = all(log_by_grn.get(c) and log_by_grn[c].pdf_attached for c in group.grn_codes)
-                logger.info("Bill %r already exists in Zoho (bill_id=%s)", group.bill_number, bill_id)
-                base.status = "existing"
-                base.bill_id = bill_id
-                base.pdf_attached = pdf_attached
-                results.append(base)
-                continue
-
-            vendor_id = zoho_bill.find_vendor_id(group.vendor_code, group.vendor_name)
-            if not vendor_id:
-                raise ValueError(f"Vendor not found: {group.vendor_code!r}")
-
-            is_interstate = zoho_bill.is_interstate_vendor(vendor_id)
-            skus = {item.get("sku", "") for item in group.line_items if item.get("sku")}
-            item_meta_map = {sku: zoho_bill.find_item_metadata(sku) for sku in skus}
-            payload = build_bill_payload(group, vendor_id, item_meta_map, is_interstate)
-            bill = zoho_bill.create_draft_bill(payload)
-            bill_id = bill["bill_id"]
-
-            for grn_code in group.grn_codes:
-                entry = LogEntry(
-                    grn_code=grn_code,
-                    bill_number=group.bill_number,
-                    bill_id=bill_id,
-                    pdf_attached=False,
-                    created_at=today,
-                )
-                log_entries.append(entry)
-                log_by_grn[grn_code] = entry
-
-            base.status = "ok"
-            base.bill_id = bill_id
-            results.append(base)
+            zoho_bill.upload_bill_attachment(bill["bill_id"], invoice_pdf.filename, content, invoice_pdf.content_type)
         except Exception as exc:
-            logger.error("Bill %s failed: %s", group.bill_number, exc)
-            base.status = "error"
-            base.error = str(exc)
-            results.append(base)
+            logger.exception("Attachment upload failed for bill %s (bill still created)", bill.get("bill_id"))
+            attachment_error = str(exc)
 
-    if log_entries:
-        append_entries(log_entries)
-
-    ok = sum(1 for r in results if r.status == "ok")
-    skipped = sum(1 for r in results if r.status == "skipped")
-    return RunResponse(total=len(results), ok=ok, failed=len(results) - ok - skipped, skipped=skipped, results=results)
-
-
-# ── Attach PDF(s) ─────────────────────────────────────────────────────────────
-
-_bill_locks: dict[str, threading.Lock] = {}
-_bill_locks_mutex = threading.Lock()
+    _log_grn_codes(group.grn_codes, bill_number, bill["bill_id"])
+    store.delete(bill_number)
+    return {
+        "bill_id": bill.get("bill_id"),
+        "bill_number": bill_number,
+        "vendor_match_method": method,
+        "attachment_error": attachment_error,
+    }
 
 
-def _get_bill_lock(key: str) -> threading.Lock:
-    with _bill_locks_mutex:
-        if key not in _bill_locks:
-            _bill_locks[key] = threading.Lock()
-        return _bill_locks[key]
-
-
-class GrnAttachResult(BaseModel):
-    grn_code: str
-    bill_number: str
-    status: str  # "ok" | "already_attached" | "no_bill" | "no_pdf" | "error"
-    filenames: list[str] = []
-    error: Optional[str] = None
-
-
-class AttachPdfsRequest(BaseModel):
-    receipts: list[ReceiptItem]
-
-
-class AttachPdfsResponse(BaseModel):
-    total_bills: int
-    total_grns: int
-    results: list[GrnAttachResult]
-
-
-@router.post("/attach-pdfs", response_model=AttachPdfsResponse, summary="Fetch GRNs, group by bill, attach Gmail PDFs to Zoho bills")
-def attach_pdfs_batch(body: AttachPdfsRequest) -> AttachPdfsResponse:
-    _check_unicommerce_config()
-
-    # Fetch GRN details from Unicommerce and group by bill number
-    grns: list[tuple[dict, str]] = []
-    for item in body.receipts:
-        try:
-            grn = unicommerce.get_inflow_receipt(item.grn_code, item.facility)
-            grns.append((grn, item.facility))
-        except Exception as exc:
-            logger.error("Failed to fetch GRN %s: %s", item.grn_code, exc)
-
-    bill_groups = group_grns(grns)
-
-    # Read log once for the initial fast-path check
-    attached_set = {e.grn_code for e in read_log() if e.pdf_attached}
-    grn_results: list[GrnAttachResult] = []
-
-    for group in bill_groups:
-        pending_fast = [c for c in group.grn_codes if c not in attached_set]
-
-        if not pending_fast:
-            for grn_code in group.grn_codes:
-                grn_results.append(GrnAttachResult(grn_code=grn_code, bill_number=group.bill_number, status="already_attached"))
-            continue
-
-        with _get_bill_lock(group.bill_number):
-            # Re-read inside the lock — another concurrent call may have finished in the meantime
-            attached_locked = {e.grn_code for e in read_log() if e.pdf_attached}
-            pending = [c for c in group.grn_codes if c not in attached_locked]
-
-            if not pending:
-                for grn_code in group.grn_codes:
-                    grn_results.append(GrnAttachResult(grn_code=grn_code, bill_number=group.bill_number, status="already_attached"))
-                continue
-
-            # One Zoho call per bill: find bill by number + vendor
-            try:
-                vendor_id = zoho_bill.find_vendor_id(group.vendor_code, group.vendor_name, group.vendor_gst)
-                bill = zoho_bill.find_bill(group.bill_number, vendor_id=vendor_id)
-            except Exception as exc:
-                logger.error("Error looking up bill %r: %s", group.bill_number, exc)
-                for grn_code in group.grn_codes:
-                    grn_results.append(GrnAttachResult(grn_code=grn_code, bill_number=group.bill_number, status="error", error=str(exc)))
-                continue
-
-            if not bill:
-                logger.warning("Bill %r not found in Zoho", group.bill_number)
-                for grn_code in group.grn_codes:
-                    grn_results.append(GrnAttachResult(grn_code=grn_code, bill_number=group.bill_number, status="no_bill"))
-                continue
-
-            bill_id = bill["bill_id"]
-
-            # Fetch PDFs from Gmail for pending GRNs only
-            refs = fetch_grn_pdfs(pending)
-
-            # Download PDFs for every GRN that has a Gmail match
-            files: list[tuple[str, bytes]] = []
-            attached_grns: list[str] = []
-            for grn_code, ref in refs.items():
-                try:
-                    pdf_bytes = download_attachment(ref.message_id, ref.attachment_id)
-                    files.append((ref.filename, pdf_bytes))
-                    attached_grns.append(grn_code)
-                except Exception as exc:
-                    logger.error("Failed to download PDF for GRN %s: %s", grn_code, exc)
-
-            if not files:
-                for grn_code in group.grn_codes:
-                    status = "already_attached" if grn_code in attached_locked else "no_pdf"
-                    grn_results.append(GrnAttachResult(grn_code=grn_code, bill_number=group.bill_number, status=status))
-                continue
-
-            # POST to Zoho — only after all files are ready
-            try:
-                zoho_bill.attach_pdf(bill_id, files)
-            except RuntimeError as exc:
-                logger.error("Zoho attach failed for bill %s: %s", bill_id, exc)
-                for grn_code in group.grn_codes:
-                    grn_results.append(GrnAttachResult(grn_code=grn_code, bill_number=group.bill_number, status="error", error=str(exc)))
-                continue
-
-            filenames = [fn for fn, _ in files]
-
-            # Mark ONLY the GRNs whose PDF was in this POST — upserts if not in log yet
-            for grn_code in attached_grns:
-                mark_pdf_attached(grn_code, bill_number=group.bill_number, bill_id=bill_id)
-
-            for grn_code in group.grn_codes:
-                if grn_code in attached_locked:
-                    grn_results.append(GrnAttachResult(grn_code=grn_code, bill_number=group.bill_number, status="already_attached"))
-                elif grn_code in attached_grns:
-                    grn_results.append(GrnAttachResult(grn_code=grn_code, bill_number=group.bill_number, status="ok", filenames=filenames))
-                else:
-                    grn_results.append(GrnAttachResult(grn_code=grn_code, bill_number=group.bill_number, status="no_pdf"))
-
-    return AttachPdfsResponse(total_bills=len(bill_groups), total_grns=len(grn_results), results=grn_results)
+@router.post("/bills/{bill_id}/attachment")
+def retry_attachment(bill_id: str, invoice_pdf: UploadFile = File(...)):
+    """Retry attaching a PDF to a bill that already exists in Zoho — for when
+    the push itself succeeded (bill created) but the attachment upload failed,
+    so there's no queue entry left to push through again."""
+    content = invoice_pdf.file.read()
+    try:
+        zoho_bill.upload_bill_attachment(bill_id, invoice_pdf.filename, content, invoice_pdf.content_type)
+    except Exception as exc:
+        logger.exception("Attachment retry failed for bill %s", bill_id)
+        raise HTTPException(status_code=502, detail=f"Attachment upload failed: {exc}")
+    return {"bill_id": bill_id, "attached": True}
 
 
 # ── Sync Log ─────────────────────────────────────────────────────────────────
@@ -520,7 +280,6 @@ def sync_log(body: SyncLogRequest) -> SyncLogResponse:
                     grn_code=grn_code,
                     bill_number=bill_number,
                     bill_id=bill_id,
-                    pdf_attached=False,
                     created_at=bill["date"] or today,
                 ))
                 existing_codes.add(grn_code)
@@ -531,7 +290,7 @@ def sync_log(body: SyncLogRequest) -> SyncLogResponse:
     return SyncLogResponse(fetched=len(bills), added=len(new_entries))
 
 
-# ── Log ───────────────────────────────────────────────────────────────────────
+# ── Log ──────────────────────────────────────────────────────────────────────
 
 class LogResponse(BaseModel):
     entries: list[LogEntry]
@@ -540,11 +299,3 @@ class LogResponse(BaseModel):
 @router.get("/log", response_model=LogResponse, summary="View GRN push history log")
 def get_log() -> LogResponse:
     return LogResponse(entries=read_log())
-
-
-def _check_unicommerce_config() -> None:
-    if not settings.unicommerce_username or not settings.unicommerce_password:
-        raise HTTPException(
-            status_code=503,
-            detail="UNICOMMERCE_USERNAME / UNICOMMERCE_PASSWORD not configured in .env",
-        )

@@ -1,15 +1,10 @@
 fastapi==0.137.1
 uvicorn[standard]==0.49.0
+python-multipart
 requests==2.34.2
 python-dotenv==1.2.2
 pydantic==2.13.4
 pydantic-settings==2.14.1
-
-# Google / Gmail
-google-api-python-client==2.197.0
-google-auth==2.55.0
-google-auth-httplib2==0.4.0
-google-auth-oauthlib==1.4.0
 
 # Vendor name fuzzy matching
 rapidfuzz==3.14.5

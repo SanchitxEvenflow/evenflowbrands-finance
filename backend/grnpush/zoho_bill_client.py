@@ -79,6 +79,30 @@ class ZohoBillClient:
 
         return resp
 
+    def _post_multipart(self, url: str, params: dict, files: dict) -> requests.Response:
+        for attempt in range(MAX_RETRIES):
+            headers = {"Authorization": f"Zoho-oauthtoken {token_manager.get_token()}"}
+            resp = self._session.post(url, params=params, files=files, headers=headers, timeout=30)
+
+            if resp.status_code == 401:
+                logger.warning("401 — refreshing Zoho token")
+                token_manager.force_refresh()
+                continue
+
+            if resp.status_code == 429:
+                retry_after = float(resp.headers.get("Retry-After", BACKOFF_BASE ** (attempt + 1)))
+                if retry_after > MAX_WAIT_SECS:
+                    logger.error("429 Retry-After=%s exceeds MAX_WAIT_SECS — aborting", retry_after)
+                    return resp
+                if attempt < MAX_RETRIES - 1:
+                    logger.warning("429 — waiting %.0fs (attempt %d)", retry_after, attempt + 1)
+                    time.sleep(retry_after)
+                    continue
+
+            return resp
+
+        return resp
+
     def _load_all_vendors(self) -> None:
         logger.info("Loading all Zoho vendors into cache...")
         page = 1
@@ -103,7 +127,10 @@ class ZohoBillClient:
             page += 1
         logger.info("Loaded %d vendors into cache", len(self._vendor_cache))
 
-    def find_vendor_id(self, vendor_code: str, vendor_name: str = "", vendor_gst: str = "") -> str | None:
+    def find_vendor_id(
+        self, vendor_code: str, vendor_name: str = "", vendor_gst: str = ""
+    ) -> tuple[str | None, str, float]:
+        """Returns (contact_id, method, score). method is one of gst/exact_name/substring/word_overlap/fuzzy/unmatched."""
         if not self._vendor_cache:
             self._load_all_vendors()
 
@@ -113,12 +140,17 @@ class ZohoBillClient:
             vendor_id = self._gst_vendor.get(gst_key)
             if vendor_id:
                 logger.info("Vendor %r matched by GST %r → %s", vendor_name or vendor_code, gst_key, vendor_id)
-                return vendor_id
+                return vendor_id, "gst", 100.0
 
         key = vendor_name.lower()
+        vendor_id = None
+        method = "unmatched"
+        score = 0.0
 
         # 2. exact name match
         vendor_id = self._vendor_cache.get(key)
+        if vendor_id:
+            method, score = "exact_name", 100.0
 
         # 3. substring match
         if not vendor_id and vendor_name:
@@ -126,6 +158,8 @@ class ZohoBillClient:
                 (cid for name, cid in self._vendor_cache.items() if key in name or name in key),
                 None,
             )
+            if vendor_id:
+                method, score = "substring", 90.0
 
         # 4. word-overlap match (handles "PVT.LTD" vs "PRIVATE LIMITED")
         if not vendor_id and vendor_name:
@@ -136,6 +170,7 @@ class ZohoBillClient:
             )
             if best_name and _word_overlap(key, best_name) >= 2:
                 vendor_id = self._vendor_cache[best_name]
+                method, score = "word_overlap", 85.0
                 logger.info("Vendor %r matched by word-overlap → %r", vendor_name, best_name)
 
         # 5. fuzzy match (rapidfuzz — catches typos / abbreviations)
@@ -147,15 +182,16 @@ class ZohoBillClient:
                 score_cutoff=_FUZZY_THRESHOLD,
             )
             if result:
-                best_name, score, _ = result
+                best_name, fuzzy_score, _ = result
                 vendor_id = self._vendor_cache[best_name]
-                logger.info("Vendor %r matched by fuzzy (score=%d) → %r", vendor_name, score, best_name)
+                method, score = "fuzzy", fuzzy_score
+                logger.info("Vendor %r matched by fuzzy (score=%d) → %r", vendor_name, fuzzy_score, best_name)
 
         if vendor_id:
-            logger.info("Vendor %r → %s", vendor_name or vendor_code, vendor_id)
+            logger.info("Vendor %r → %s (method=%s)", vendor_name or vendor_code, vendor_id, method)
         else:
             logger.warning("Vendor not found in Zoho: code=%r name=%r gst=%r", vendor_code, vendor_name, vendor_gst)
-        return vendor_id
+        return vendor_id, method, score
 
     def is_interstate_vendor(self, vendor_id: str) -> bool:
         if not self._vendor_cache:
@@ -263,34 +299,15 @@ class ZohoBillClient:
         logger.info("Draft bill created: %s → bill_id=%s", grn_code, bill_id)
         return data["bill"]
 
-    def attach_pdf(self, bill_id: str, files: list[tuple[str, bytes]]) -> None:
-        multipart_files = [
-            ("attachment", (fn, data, "application/pdf"))
-            for fn, data in files
-        ]
-        for attempt in range(MAX_RETRIES):
-            headers = {"Authorization": f"Zoho-oauthtoken {token_manager.get_token()}"}
-            resp = self._session.post(
-                f"{ZOHO_API_BASE}/bills/{bill_id}/attachment",
-                params={"organization_id": settings.org_id},
-                headers=headers,
-                files=multipart_files,
-                timeout=60,
-            )
-            if resp.status_code == 401:
-                token_manager.force_refresh()
-                continue
-            if resp.status_code == 429:
-                wait = min(BACKOFF_BASE * (2 ** attempt), MAX_WAIT_SECS)
-                logger.warning("429 attaching PDF, waiting %ss", wait)
-                time.sleep(wait)
-                continue
-            if not resp.ok:
-                raise RuntimeError(f"Zoho attach_pdf failed [{resp.status_code}]: {resp.text}")
-            filenames = [fn for fn, _ in files]
-            logger.info("PDFs %s attached to bill %s", filenames, bill_id)
-            return
-        raise RuntimeError(f"Zoho attach_pdf exceeded retries for bill {bill_id}")
+    def upload_bill_attachment(self, bill_id: str, filename: str, content: bytes, content_type: str) -> None:
+        """Attach a file (e.g. vendor's invoice PDF) to an existing Bill."""
+        resp = self._post_multipart(
+            f"{ZOHO_API_BASE}/bills/{bill_id}/attachment",
+            params={"organization_id": settings.org_id},
+            files={"attachment": (filename, content, content_type)},
+        )
+        if not resp.ok:
+            raise RuntimeError(f"Zoho attachment upload failed [{resp.status_code}]: {resp.text}")
 
 
 zoho_bill = ZohoBillClient()

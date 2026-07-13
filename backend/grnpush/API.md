@@ -1,24 +1,29 @@
 # GRN Push — Backend API Reference
 
 Base URL: `http://localhost:8000`
-All endpoints: `POST`, `Content-Type: application/json`
 
 ---
 
-## Overview — 3-Step Flow
+## Overview — Queue-Review Flow
 
-Call three endpoints in sequence. Output of each step feeds directly into the next.
+GRNs are pulled from Unicommerce, grouped by vendor invoice number, and merged into a
+persistent **pending-bills queue** (`grnpush/data/pending_bills.json`, keyed by `bill_number`).
+A human reviews/edits each queue entry, then pushes it to Zoho Books individually — no
+one-click bulk push. On a clean push, the entry is deleted from the queue.
+
+Only one facility is pulled: **`EL_VIRTUAL_BLR`** (virtual warehouse).
 
 ```
-Step 1: POST /grn-push/receipts
-        → returns list of GRN codes per facility
-
-Step 2: POST /grn-push/fetch-details
-        → takes Step 1 output, returns grouped bill objects
-
-Step 3: POST /grn-push/create-bills
-        → takes Step 2 output, pushes drafts to Zoho Books
+1. POST /grn-push/receipts        → list GRN codes in a date range
+2. POST /grn-push/fetch-details   → fetch + group by invoice number, merge into queue
+3. GET  /grn-push/queue           → review pending entries (re-callable any time)
+4. PATCH /grn-push/queue/{bill_number}   → edit an entry before pushing
+5. POST /grn-push/queue/{bill_number}/push  → push one entry to Zoho (+ optional PDF)
 ```
+
+Partial GRNs for the same vendor invoice merge automatically: pulling GRNs across
+multiple dates for one invoice concatenates line items into the same queue entry rather
+than creating duplicate bills.
 
 ---
 
@@ -26,238 +31,216 @@ Step 3: POST /grn-push/create-bills
 
 ### `POST /grn-push/receipts`
 
-Fetches all GRN (inflow receipt) codes from Unicommerce for a date range.
-Queries 3 hardcoded facilities: `EL_BLR_APEX`, `EL_BLR_APEX_QC`, `EL_VIRTUAL_BLR`.
+Fetches all GRN (inflow receipt) codes from Unicommerce for a date range, facility
+`EL_VIRTUAL_BLR` only.
 
 **Request**
 ```json
-{
-  "start": "2026-06-01",
-  "end": "2026-06-16"
-}
+{ "start": "2026-06-01", "end": "2026-06-16" }
 ```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `start` | string | Start date `YYYY-MM-DD` (inclusive) |
-| `end` | string | End date `YYYY-MM-DD` (inclusive) |
 
 **Response**
 ```json
-{
-  "receipts": [
-    { "grn_code": "G3612", "facility": "EL_BLR_APEX" },
-    { "grn_code": "G3613", "facility": "EL_BLR_APEX" },
-    { "grn_code": "G2005", "facility": "EL_BLR_APEX_QC" }
-  ],
-  "errors": []
-}
+{ "facility": "EL_VIRTUAL_BLR", "codes": ["G3612", "G3613", "G2005"] }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `receipts` | array | GRN code + facility pairs |
-| `receipts[].grn_code` | string | Unicommerce GRN code e.g. `"G3612"` |
-| `receipts[].facility` | string | Warehouse facility code |
-| `errors` | array | Per-facility error strings (empty if all OK) |
-
-**UI notes**
-- Show total GRN count found: `"Found N GRNs"`
-- If `errors` non-empty, show per-facility warning banners but still proceed
-- Pass the full `receipts` array as-is to Step 2
+Returns `503` if `UNICOMMERCE_USERNAME`/`UNICOMMERCE_PASSWORD` aren't configured.
 
 ---
 
-## Step 2 — Fetch Details & Group by Bill
+## Step 2 — Fetch Details & Merge Into Queue
 
 ### `POST /grn-push/fetch-details`
 
-Fetches full GRN details from Unicommerce and groups them by vendor invoice number (= Zoho bill number).
-Multiple GRNs sharing the same invoice number are merged into one bill object.
+Fetches full GRN detail per code (parallel, up to 5 workers), groups by vendor invoice
+number, and merges each group into the pending-bills queue. Bills whose invoice number
+contains `kitting`, `dekitting`, or `return` are internal stock moves — they're filtered
+out here and never enter the queue.
 
-**Request** — pass `receipts` from Step 1:
+**Request**
 ```json
-{
-  "receipts": [
-    { "grn_code": "G3612", "facility": "EL_BLR_APEX" },
-    { "grn_code": "G3613", "facility": "EL_BLR_APEX" }
-  ]
-}
+{ "codes": ["G3612", "G3613"] }
 ```
 
 **Response**
 ```json
 {
-  "bills": [
-    {
-      "bill_number": "26-27/142",
-      "po_code": "EL/KN/PO/2526/3205",
-      "grn_codes": ["G3612"],
-      "facilities": ["EL_BLR_APEX"],
-      "vendor_code": "EL_METROBAG",
-      "vendor_name": "METRO BAG",
-      "date": "2026-06-16",
-      "invoice_date": "2026-06-13",
-      "line_items": [
-        {
-          "name": "Insulated Lunch Bag, Rectangle, Black",
-          "description": "SKU FRW-LNCH-REC-BAG-BLK",
-          "quantity": 600,
-          "rate": 122.72,
-          "sku": "FRW-LNCH-REC-BAG-BLK"
-        }
-      ],
-      "notes": "Uniware GRN(s) G3612 | PO EL/KN/PO/2526/3205 | Vendor EL_METROBAG | Gate Entry IGP2003"
-    }
-  ]
+  "facility": "EL_VIRTUAL_BLR",
+  "receipts": [{ "code": "G3612", "detail": { "...": "..." } }],
+  "errors": [{ "code": "G3614", "error": "timeout" }],
+  "queued": ["26-27/142"],
+  "skipped": ["dekitting-batch-04"]
 }
 ```
 
-### BillGroup fields
+| Field | Description |
+|-------|-------------|
+| `receipts` | Raw GRN detail fetched successfully |
+| `errors` | GRN codes that failed to fetch, with error message |
+| `queued` | `bill_number`s upserted into the queue this call |
+| `skipped` | `bill_number`s filtered out (kitting/dekitting/return) |
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `bill_number` | string | Vendor invoice number — becomes Zoho Bill # |
-| `po_code` | string | Purchase order code |
-| `grn_codes` | string[] | All Unicommerce GRN codes in this bill |
-| `facilities` | string[] | Warehouses the GRNs came from |
-| `vendor_code` | string | Unicommerce vendor code |
-| `vendor_name` | string | Vendor display name |
-| `date` | string \| null | Earliest GRN date `YYYY-MM-DD` |
-| `invoice_date` | string \| null | Vendor invoice date `YYYY-MM-DD` |
-| `line_items` | array | See below |
-| `notes` | string | Auto-built: GRN codes, PO, vendor code, gate entry |
-
-### Line item fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Item name from Unicommerce |
-| `description` | string | SKU code e.g. `"SKU FRW-LNCH-REC-BAG-BLK"` |
-| `quantity` | number | Received quantity |
-| `rate` | number | Unit price (ex-tax) |
-| `sku` | string | SKU code (used internally in Step 3 for Zoho item lookup) |
-
-**UI notes**
-- Show a preview table before Step 3 — suggested columns:
-  `Bill #` | `Vendor` | `GRNs` | `Items` | `Total Value` | `Will Skip?`
-- Total value = sum of `quantity × rate` across all line items
-- Bills with `bill_number` containing "kitting", "dekitting", or "return" will be auto-skipped in Step 3 — mark these visually (grey out / badge)
-- Pass the full `bills` array as-is to Step 3
+**Partial-fetch safety**: if any GRN in the batch failed (`errors` non-empty) while
+other GRNs in the same batch did queue successfully, every touched queue entry is
+flagged `status: "fetch_incomplete"` with an explanatory note in `issues`. A
+`fetch_incomplete` entry **cannot be pushed** until `fetch-details` is re-run for the
+failed codes and the flag clears on the next successful merge.
 
 ---
 
-## Step 3 — Create Draft Bills in Zoho
+## Queue
 
-### `POST /grn-push/create-bills`
+### `GET /grn-push/queue`
 
-Pushes each bill group as a draft bill to Zoho Books.
-Per bill: checks duplicate, resolves vendor, picks intra/interstate GST, looks up item IDs, creates bill.
+Returns the full pending-bills queue, keyed by `bill_number`.
 
-**Request** — pass `bills` from Step 2:
 ```json
 {
-  "bills": [ /* BillGroup objects from Step 2 */ ]
+  "26-27/142": {
+    "bill_number": "26-27/142",
+    "po_code": "EL/KN/PO/2526/3205",
+    "grn_codes": ["G3612"],
+    "facilities": ["EL_VIRTUAL_BLR"],
+    "vendor_code": "EL_METROBAG",
+    "vendor_name": "METRO BAG",
+    "vendor_gst": "29ABCDE1234F1Z5",
+    "date": "2026-06-16",
+    "invoice_date": "2026-06-13",
+    "line_items": [
+      { "name": "Insulated Lunch Bag", "description": "SKU FRW-LNCH-REC-BAG-BLK", "quantity": 600, "rate": 122.72, "sku": "FRW-LNCH-REC-BAG-BLK" }
+    ],
+    "notes": "Uniware GRN(s) G3612 | PO EL/KN/PO/2526/3205 | Vendor EL_METROBAG | Gate Entry IGP2003",
+    "status": "pending",
+    "issues": [],
+    "updated_at": "2026-06-16T10:22:00Z"
+  }
 }
 ```
-
-**Response**
-```json
-{
-  "total": 6,
-  "ok": 4,
-  "failed": 1,
-  "results": [
-    { "bill_number": "26-27/142",    "status": "ok",      "bill_id": "727927000219115022", "error": null },
-    { "bill_number": "26-27/140",    "status": "ok",      "bill_id": "727927000219115028", "error": null },
-    { "bill_number": "dekitting ",   "status": "skipped", "bill_id": null,                 "error": null },
-    { "bill_number": "2026-27/54",   "status": "ok",      "bill_id": "727927000219115044", "error": null },
-    { "bill_number": "INFI26-27/27", "status": "ok",      "bill_id": "727927000219115049", "error": null },
-    { "bill_number": "XYZ/001",      "status": "error",   "bill_id": null,                 "error": "Bill 'XYZ/001' already exists in Zoho" }
-  ]
-}
-```
-
-### Response fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `total` | number | Total bills processed (including skipped) |
-| `ok` | number | Successfully created in Zoho |
-| `failed` | number | Errored (skipped not counted) |
-| `results` | array | Per-bill result |
-| `results[].bill_number` | string | Bill / invoice number |
-| `results[].status` | string | `"ok"` \| `"error"` \| `"skipped"` |
-| `results[].bill_id` | string \| null | Zoho bill ID (only when `status = "ok"`) |
-| `results[].error` | string \| null | Error message (only when `status = "error"`) |
 
 ### Status values
 
-| Status | Meaning | UI suggestion |
-|--------|---------|---------------|
-| `ok` | Draft bill created in Zoho Books | Green ✓, show bill_id |
-| `error` | Creation failed | Red ✗, show `error` message |
-| `skipped` | Bill name contains "kitting", "dekitting", or "return" — not pushed | Grey —, show "Skipped" |
+| Status | Meaning | Can push? |
+|--------|---------|-----------|
+| `pending` | Normal, ready for review/push | Yes |
+| `fetch_incomplete` | Merged from a batch with failed GRN fetches — may be missing items | No — re-run fetch-details first |
+| `sku_flagged` | Last push attempt hit a SKU not found in Zoho | No — fix line item SKU(s), then retry push |
+| `vendor_flagged` | Last push attempt found no Zoho vendor match at all | No — fix vendor fields, then retry push |
 
-### Common error messages
+### `PATCH /grn-push/queue/{bill_number}`
 
-| Error message | Cause & action |
-|---------------|----------------|
-| `Bill 'X' already exists in Zoho` | Duplicate run — bill already exists, no action needed |
-| `Zoho vendor not found: 'CODE'` | Vendor not in Zoho — create vendor in Zoho Books first |
+Edit `line_items`, `vendor_name`, `vendor_gst`, and/or `po_code` before pushing. Only
+fields provided are updated (each field is a full replace, not a deep merge). 404 if no
+pending entry exists for that `bill_number`.
+
+**Request**
+```json
+{ "vendor_gst": "29ABCDE1234F1Z5", "line_items": [ /* corrected array */ ] }
+```
+
+### `DELETE /grn-push/queue/{bill_number}`
+
+Discards a queue entry without pushing.
 
 ---
 
-## What Happens Inside Step 3
+## Push
 
-Per bill, in order:
+### `POST /grn-push/queue/{bill_number}/push`
 
-1. **Skip check** — bill_number contains "kitting"/"dekitting"/"return" → status `skipped`
-2. **Duplicate check** — query Zoho for bill with same number → error if already exists
-3. **Vendor lookup** — search 459 cached Zoho vendors by name (exact → substring → word-overlap)
-4. **Interstate detection** — vendor GST state code vs Karnataka (29) → picks IGST or GST
-5. **Item lookup** — per SKU, fetch Zoho item → `item_id` + intra/inter tax IDs
-6. **Bill creation** — POST to Zoho Books as `status: "draft"` with correct vendor, items, taxes
+`multipart/form-data`, optional field `invoice_pdf` (file).
+
+Resolves vendor + SKUs against Zoho, creates the draft Bill, attaches the PDF if given,
+and removes the entry from the queue on success. Steps, in order:
+
+1. **`fetch_incomplete` guard** — blocks with `422` if the entry was flagged in Step 2.
+2. **Duplicate check** — queries Zoho for an existing bill with this `bill_number`. If
+   found, backfills the GRN audit log against the existing bill and clears the queue
+   entry **without creating a new bill** (handles queue rebuilds after a crash).
+3. **SKU resolution** — every line item's SKU must resolve to a Zoho item. Any miss
+   blocks the push entirely (`422`), flags the entry `sku_flagged`, and sends a Slack
+   alert. **This is a hard block — no bill is created.**
+4. **Vendor resolution** — GST exact → name exact → substring → word-overlap → fuzzy
+   match (`rapidfuzz`, threshold 80). No match at all blocks the push (`422`), flags
+   `vendor_flagged`, and Slack-alerts. A match found via substring/word-overlap/fuzzy
+   (i.e. not GST or exact name) still pushes, but sends a Slack alert asking for manual
+   verification.
+5. **Bill creation** — draft bill POSTed to Zoho Books with resolved vendor, items,
+   intra/interstate tax.
+6. **PDF attachment** — if `invoice_pdf` was uploaded, attaches it to the created bill.
+   Attachment failure does **not** roll back the bill — the bill was already created —
+   but `attachment_error` is returned non-null so the UI can surface it and offer retry.
+7. **Audit log** — GRN codes are appended to the local GRN→bill audit log
+   (`GET /grn-push/log`).
+8. Queue entry deleted.
+
+**Response**
+```json
+{
+  "bill_id": "727927000219115022",
+  "bill_number": "26-27/142",
+  "vendor_match_method": "gst",
+  "attachment_error": null
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `vendor_match_method` | `"gst"` \| `"exact_name"` \| `"substring"` \| `"word_overlap"` \| `"fuzzy"` \| `"existing"` (duplicate short-circuit) |
+| `attachment_error` | Non-null string if the PDF was uploaded but attach failed (bill still created) |
+
+### `POST /grn-push/bills/{bill_id}/attachment`
+
+`multipart/form-data`, required field `invoice_pdf`. Retries attaching a PDF to a bill
+that already exists in Zoho — for when the push succeeded but the attachment upload
+failed, so there's no queue entry left to push through again.
+
+```json
+{ "bill_id": "727927000219115022", "attached": true }
+```
+
+Returns `502` with the error message if the retry also fails.
+
+---
+
+## Slack Alerts
+
+Sent (best-effort — logged always, POSTed only if `SLACK_WEBHOOK_URL` is configured)
+on:
+- SKU not found in Zoho (push blocked)
+- No vendor match at all (push blocked)
+- Vendor matched via substring/word-overlap/fuzzy (push proceeds, flagged for review)
+
+---
+
+## Sync Log & History
+
+### `POST /grn-push/sync-log`
+
+Imports existing Zoho bills (by their `cf_grn` custom field) into the local GRN audit
+log — for backfilling history from bills created outside this tool.
+
+```json
+{ "date_from": "2026-01-01", "date_to": "2026-06-16" }
+```
+```json
+{ "fetched": 42, "added": 7 }
+```
+
+### `GET /grn-push/log`
+
+Returns the full GRN → bill audit trail (`grn_code`, `bill_number`, `bill_id`,
+`created_at`).
 
 ---
 
 ## Error Handling Summary
 
-| Scenario | HTTP status | How error surfaces |
-|----------|-------------|-------------------|
-| Individual GRN fetch fails (Step 2) | 200 | GRN silently skipped; bill may have fewer items |
-| Individual bill fails (Step 3) | 200 | `results[].status = "error"` with message |
-| Unicommerce not configured | 503 | `{ "detail": "UNICOMMERCE_USERNAME / UNICOMMERCE_PASSWORD not configured" }` |
-
-Steps 1–3 always return HTTP 200 for per-item failures — check `results[].status` not HTTP status.
-
----
-
-## Suggested UI Layout
-
-```
-┌─────────────────────────────────────────┐
-│  GRN Push                               │
-│                                         │
-│  Date Range:  [2026-06-01] → [2026-06-16] [Fetch GRNs] │
-│                                         │
-│  ● Found 8 GRNs across 3 facilities    │  ← Step 1 result
-│                                         │
-│  [Load Bill Preview]                    │
-│                                         │
-│  Bill Preview:                          │  ← Step 2 result
-│  ┌──────────────┬────────────┬──────┬──────────┬────────┐
-│  │ Bill #       │ Vendor     │ GRNs │ Value    │ Status │
-│  ├──────────────┼────────────┼──────┼──────────┼────────┤
-│  │ 26-27/142    │ METRO BAG  │ 1    │ ₹73,632  │ Ready  │
-│  │ dekitting    │ Rusabl     │ 1    │ ₹14,689  │ Skip   │
-│  └──────────────┴────────────┴──────┴──────────┴────────┘
-│                                         │
-│  [Push to Zoho]                         │
-│                                         │
-│  Results:                               │  ← Step 3 result
-│  ✓ 26-27/142  →  bill_id 72792700...   │
-│  —  dekitting  →  Skipped               │
-│  ✗ XYZ/001    →  Already exists        │
-└─────────────────────────────────────────┘
-```
+| Scenario | HTTP status |
+|----------|-------------|
+| Unicommerce not configured | 503 |
+| Push attempted on `fetch_incomplete` entry | 422 |
+| SKU not found in Zoho | 422, entry flagged `sku_flagged` |
+| No vendor match | 422, entry flagged `vendor_flagged` |
+| No pending entry for `bill_number` | 404 |
+| Zoho bill creation fails | 502 |
+| Attachment upload/retry fails | 502 (bill itself still exists) |

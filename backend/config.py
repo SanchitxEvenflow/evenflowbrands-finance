@@ -2,7 +2,7 @@ import os
 from typing import Optional
 from pydantic_settings import BaseSettings
 
-_env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+_env_path = os.path.join(os.path.dirname(__file__), ".env")
 
 
 class Settings(BaseSettings):
@@ -20,11 +20,9 @@ class Settings(BaseSettings):
     unicommerce_base_url: str = "https://evenflow.unicommerce.com"
     unicommerce_client_id: str = "my-trusted-client"
 
-    gmail_client_id: Optional[str] = None
-    gmail_client_secret: Optional[str] = None
-    gmail_refresh_token: Optional[str] = None
+    slack_webhook_url: str = ""
 
-    model_config = {"env_file": _env_path}
+    model_config = {"env_file": _env_path, "extra": "ignore"}
 
 
 settings = Settings()

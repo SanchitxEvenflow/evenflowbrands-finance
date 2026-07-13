@@ -9,12 +9,6 @@ from pydantic import BaseModel
 logger = logging.getLogger("mapper")
 
 
-class GmailAttachmentRef(BaseModel):
-    message_id: str
-    attachment_id: str
-    filename: str
-
-
 class BillGroup(BaseModel):
     bill_number: str        # vendorInvoiceNumber → Zoho Bill#
     po_code: str            # purchaseOrder.code → reference_number / cf_order_number
@@ -27,7 +21,6 @@ class BillGroup(BaseModel):
     invoice_date: Optional[str] = None  # vendorInvoiceDate
     line_items: list[dict]
     notes: str
-    grn_gmail_attachments: dict[str, GmailAttachmentRef] = {}  # grn_code → attachment ref
 
 
 def _epoch_ms_to_date(ms) -> str | None:
@@ -155,6 +148,46 @@ def group_grns(grns: list[tuple[dict, str]]) -> list[BillGroup]:
         ))
 
     return result
+
+
+def merge_bill_groups(existing: BillGroup, new: BillGroup) -> BillGroup:
+    """
+    Merge a newly-pulled GRN group into an existing not-yet-pushed one sharing
+    the same bill_number (vendorInvoiceNumber) — handles partial GRNs where a
+    vendor invoice arrives across multiple Unicommerce pulls.
+
+    Line items are concatenated, not summed by SKU — each keeps its own
+    "Uniware GRN {code}" description so a partial-then-partial invoice stays
+    traceable back to the exact GRN it came from.
+    """
+    grn_codes = existing.grn_codes + [c for c in new.grn_codes if c not in existing.grn_codes]
+    facilities = existing.facilities + [f for f in new.facilities if f not in existing.facilities]
+    line_items = existing.line_items + new.line_items
+
+    dates = [d for d in (existing.date, new.date) if d]
+    date = min(dates) if dates else None
+    invoice_date = existing.invoice_date or new.invoice_date
+
+    notes_parts = [
+        f"Uniware GRN(s) {', '.join(grn_codes)}",
+        f"PO {existing.po_code or new.po_code}" if (existing.po_code or new.po_code) else None,
+        f"Vendor {existing.vendor_code or new.vendor_code}" if (existing.vendor_code or new.vendor_code) else None,
+    ]
+    notes = " | ".join(p for p in notes_parts if p)
+
+    return BillGroup(
+        bill_number=existing.bill_number,
+        po_code=existing.po_code or new.po_code,
+        grn_codes=grn_codes,
+        facilities=facilities,
+        vendor_code=existing.vendor_code or new.vendor_code,
+        vendor_name=existing.vendor_name or new.vendor_name,
+        vendor_gst=existing.vendor_gst or new.vendor_gst,
+        date=date,
+        invoice_date=invoice_date,
+        line_items=line_items,
+        notes=notes,
+    )
 
 
 def build_bill_payload(
