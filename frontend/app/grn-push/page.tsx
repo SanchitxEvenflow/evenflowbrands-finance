@@ -50,17 +50,11 @@ const Spinner = ({ size = 16 }: { size?: number }) => (
   </svg>
 );
 
-const formatDateDDMMYYYY = (date: Date) => {
-  const d = date.getDate().toString().padStart(2, "0");
-  const m = (date.getMonth() + 1).toString().padStart(2, "0");
+const formatDateYYYYMMDD = (date: Date) => {
   const y = date.getFullYear();
-  return `${d}/${m}/${y}`;
-};
-
-const parseDateToYYYYMMDD = (ddmmyyyy: string) => {
-  const parts = ddmmyyyy.split("/");
-  if (parts.length === 3) return `${parts[2]}-${parts[1]}-${parts[0]}`;
-  return ddmmyyyy;
+  const m = (date.getMonth() + 1).toString().padStart(2, "0");
+  const d = date.getDate().toString().padStart(2, "0");
+  return `${y}-${m}-${d}`;
 };
 
 const statusColor = (status: string) => {
@@ -76,8 +70,8 @@ const statusColor = (status: string) => {
 };
 
 export default function GrnPushPage() {
-  const [startDate, setStartDate] = useState(formatDateDDMMYYYY(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)));
-  const [endDate, setEndDate] = useState(formatDateDDMMYYYY(new Date()));
+  const [startDate, setStartDate] = useState(formatDateYYYYMMDD(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)));
+  const [endDate, setEndDate] = useState(formatDateYYYYMMDD(new Date()));
 
   const [isPulling, setIsPulling] = useState(false);
   const [pulledCodes, setPulledCodes] = useState<string[] | null>(null);
@@ -127,7 +121,7 @@ export default function GrnPushPage() {
       const res = await fetch(`${API_BASE}/grn-push/receipts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ start: parseDateToYYYYMMDD(startDate), end: parseDateToYYYYMMDD(endDate) }),
+        body: JSON.stringify({ start: startDate, end: endDate }),
       });
       if (!res.ok) throw new Error("Failed to pull receipts");
       const data = await res.json();
@@ -233,10 +227,9 @@ export default function GrnPushPage() {
         <h2 className="text-lg font-bold text-slate-800 mb-4">1. Pull GRNs by Date</h2>
         <div className="flex items-end gap-4 flex-wrap">
           <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-2">Start Date (DD/MM/YYYY)</label>
+            <label className="block text-sm font-semibold text-slate-700 mb-2">Start Date</label>
             <input
-              type="text"
-              placeholder="DD/MM/YYYY"
+              type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
               disabled={isPulling}
@@ -244,10 +237,9 @@ export default function GrnPushPage() {
             />
           </div>
           <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-2">End Date (DD/MM/YYYY)</label>
+            <label className="block text-sm font-semibold text-slate-700 mb-2">End Date</label>
             <input
-              type="text"
-              placeholder="DD/MM/YYYY"
+              type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
               disabled={isPulling}
