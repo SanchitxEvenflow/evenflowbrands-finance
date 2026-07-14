@@ -225,6 +225,9 @@ frontend/node_modules/
 backend/venv/
 backend/__pycache__/
 
+# GRN -> Zoho pending-bills queue -- vendor/invoice data, not source
+backend/grnpush/data/
+
 
 .serena 
 backend/credentials.json

@@ -8,7 +8,6 @@ interface LogEntry {
   grn_code: string;
   bill_number: string;
   bill_id: string;
-  pdf_attached: boolean;
   created_at: string;
 }
 
@@ -72,14 +71,6 @@ export default function HistoryPage() {
     });
   };
 
-  const billStatus = (g: BillGroup) => {
-    const total = g.grns.length;
-    const attached = g.grns.filter(e => e.pdf_attached).length;
-    if (attached === total) return "all";
-    if (attached === 0) return "none";
-    return "partial";
-  };
-
   return (
     <div className="w-full max-w-5xl mx-auto py-8 px-6">
       <div className="mb-8">
@@ -109,21 +100,10 @@ export default function HistoryPage() {
           <div className="flex items-center gap-4 mb-4 text-sm text-slate-600">
             <span className="font-semibold">{bills.length} bills</span>
             <span>{bills.reduce((s, b) => s + b.grns.length, 0)} GRNs total</span>
-            <span className="text-green-700 font-medium">
-              {bills.filter(b => billStatus(b) === "all").length} fully attached
-            </span>
-            <span className="text-amber-700 font-medium">
-              {bills.filter(b => billStatus(b) === "partial").length} partial
-            </span>
-            <span className="text-slate-500">
-              {bills.filter(b => billStatus(b) === "none").length} pending
-            </span>
           </div>
 
           {bills.map(group => {
-            const status = billStatus(group);
             const isOpen = expanded.has(group.bill_number);
-            const attached = group.grns.filter(e => e.pdf_attached).length;
 
             return (
               <div key={group.bill_number} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -132,31 +112,9 @@ export default function HistoryPage() {
                   onClick={() => toggle(group.bill_number)}
                   className="w-full flex items-center gap-4 px-5 py-4 text-left hover:bg-slate-50 transition"
                 >
-                  {/* Status indicator */}
-                  <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-                    status === "all" ? "bg-green-500" :
-                    status === "partial" ? "bg-amber-400" :
-                    "bg-slate-300"
-                  }`} />
-
                   <span className="font-mono font-semibold text-slate-800 flex-1">{group.bill_number}</span>
 
-                  {/* GRN count + PDF badge */}
                   <span className="text-xs text-slate-500">{group.grns.length} GRN{group.grns.length !== 1 ? "s" : ""}</span>
-
-                  <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
-                    status === "all"
-                      ? "bg-green-50 text-green-700"
-                      : status === "partial"
-                      ? "bg-amber-50 text-amber-700"
-                      : "bg-slate-100 text-slate-500"
-                  }`}>
-                    {status === "all"
-                      ? "PDF Attached"
-                      : status === "partial"
-                      ? `${attached}/${group.grns.length} PDFs`
-                      : "No PDF"}
-                  </span>
 
                   <span className="text-xs text-slate-400 font-mono">{group.created_at}</span>
 
@@ -176,7 +134,6 @@ export default function HistoryPage() {
                       <thead>
                         <tr className="bg-slate-50 text-left">
                           <th className="px-5 py-2 font-semibold text-slate-500 text-xs">GRN Code</th>
-                          <th className="px-5 py-2 font-semibold text-slate-500 text-xs">PDF</th>
                           <th className="px-5 py-2 font-semibold text-slate-500 text-xs">Date</th>
                           <th className="px-5 py-2 font-semibold text-slate-500 text-xs">Bill ID</th>
                         </tr>
@@ -185,17 +142,6 @@ export default function HistoryPage() {
                         {group.grns.map(entry => (
                           <tr key={entry.grn_code} className="hover:bg-slate-50">
                             <td className="px-5 py-2.5 font-mono text-slate-700">{entry.grn_code}</td>
-                            <td className="px-5 py-2.5">
-                              {entry.pdf_attached ? (
-                                <span className="inline-flex items-center gap-1 bg-green-100 text-green-700 text-xs font-semibold px-2 py-0.5 rounded-full">
-                                  ✓ Attached
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-500 text-xs font-semibold px-2 py-0.5 rounded-full">
-                                  Pending
-                                </span>
-                              )}
-                            </td>
                             <td className="px-5 py-2.5 text-xs text-slate-400 font-mono">{entry.created_at}</td>
                             <td className="px-5 py-2.5 text-xs text-slate-400 font-mono truncate max-w-xs">{entry.bill_id || "—"}</td>
                           </tr>

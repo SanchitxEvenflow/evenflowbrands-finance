@@ -15,7 +15,6 @@ export default function Sidebar() {
       icon: "📦",
       subLinks: [
         { name: "Bills", href: "/grn-push" },
-        { name: "PDF", href: "/grn-push/pdf" },
         { name: "History", href: "/grn-push/history" },
       ]
     },
