@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from creditnote.blinkit.blinkit_client import blinkit_client
+from creditnote.blinkit.blinkit_client import BlinkitAuthExpired, blinkit_client
 from creditnote.blinkit.pdf_parser import parse_discrepancy_note
 from creditnote.blinkit.zoho_client import blinkit_zoho
 
@@ -49,12 +49,17 @@ def process_po(payload: ProcessPoRequest):
         raise HTTPException(status_code=404, detail=f"No Zoho invoice found for PO {payload.po_number!r}")
     invoice = blinkit_zoho.get_invoice(invoices[0]["invoice_id"])
 
-    po_id = blinkit_client.find_po_id(payload.po_number)
+    try:
+        po_id = blinkit_client.find_po_id(payload.po_number)
+    except BlinkitAuthExpired as exc:
+        raise HTTPException(status_code=401, detail=str(exc))
     if not po_id:
         raise HTTPException(status_code=404, detail=f"No Blinkit PO found for {payload.po_number!r}")
 
     try:
         pdf_bytes = blinkit_client.download_discrepancy_note_pdf(po_id, invoice["invoice_number"])
+    except BlinkitAuthExpired as exc:
+        raise HTTPException(status_code=401, detail=str(exc))
     except Exception as exc:
         logger.exception("Discrepancy note download failed for PO %s", payload.po_number)
         raise HTTPException(status_code=502, detail=f"Blinkit discrepancy note download failed: {exc}")

@@ -8,7 +8,16 @@ export default function Sidebar() {
   const pathname = usePathname();
 
   const links = [
-    { name: "Credit Notes", href: "/credit-notes", icon: "📧" },
+    { name: "Email Credit Notes", href: "/credit-notes", icon: "📧" },
+    {
+      name: "Create Credit Note",
+      href: "/create-credit-note",
+      icon: "➕",
+      subLinks: [
+        { name: "Blinkit", href: "/create-credit-note/blinkit" },
+        { name: "Swiggy", href: "/create-credit-note/swiggy" },
+      ]
+    },
     { 
       name: "GRN Push", 
       href: "/grn-push", 

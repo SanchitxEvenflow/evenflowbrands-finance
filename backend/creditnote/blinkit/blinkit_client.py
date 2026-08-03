@@ -4,10 +4,12 @@ import logging
 import os
 import re
 import threading
+import time
 
 import requests
 
 from config import settings
+from zoho_client import BACKOFF_BASE, MAX_RETRIES, MAX_WAIT_SECS
 
 logger = logging.getLogger("blinkit")
 
@@ -20,11 +22,22 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
 )
 
+# Blinkit's login is emailed-OTP, not OAuth — there's no published rate-limit spec to size
+# this against. Fixed floor between requests, shared across every caller (incl. concurrent
+# process-po workers) via one instance-level lock.
+# ponytail: naive fixed interval, not adaptive — tighten/loosen once real Blinkit behavior
+# is observed, or replace with a token bucket if that's ever worth the complexity.
+_MIN_REQUEST_INTERVAL = 1.0
+
 # Session survives process restarts (OTP is emailed, so re-login isn't free).
 # ponytail: plaintext json on disk, fine for a local single-tenant token cache.
 _TOKENS_FILE = os.path.join(os.path.dirname(__file__), "tokens.json")
 
 _PRESIGNED_URL_RE = re.compile(r'https://grofers-prod-retail-reports[^"\\\s]+')
+
+
+class BlinkitAuthExpired(RuntimeError):
+    """Raised when Blinkit rejects the cached token with a 401 — re-login via OTP required."""
 
 
 def _extract_presigned_url(data: dict) -> str | None:
@@ -48,6 +61,8 @@ class BlinkitClient:
         self._session = requests.Session()
         self._access_token: str | None = None
         self._refresh_token: str | None = None
+        self._pace_lock = threading.Lock()
+        self._last_request_at = 0.0
         self._load_tokens()
 
     def _load_tokens(self) -> None:
@@ -61,6 +76,54 @@ class BlinkitClient:
     def _save_tokens(self) -> None:
         with open(_TOKENS_FILE, "w") as f:
             json.dump({"access_token": self._access_token, "refresh_token": self._refresh_token}, f)
+
+    def _clear_tokens(self) -> None:
+        with self._lock:
+            self._access_token = None
+            self._refresh_token = None
+        if os.path.exists(_TOKENS_FILE):
+            os.remove(_TOKENS_FILE)
+
+    def _check_response(self, resp: requests.Response) -> requests.Response:
+        """Every authenticated call routes its response through here — a 401 means the
+        cached token is dead, so it's cleared immediately and /blinkit/status flips to
+        logged_in=false without a separate live-check call to Blinkit."""
+        if resp.status_code == 401:
+            self._clear_tokens()
+            raise BlinkitAuthExpired("Blinkit token expired — re-login required")
+        return resp
+
+    def _pace(self) -> None:
+        """Blocks so outbound Blinkit requests stay >= _MIN_REQUEST_INTERVAL apart, across
+        every caller sharing this client — including concurrent process-po workers."""
+        with self._pace_lock:
+            wait = self._last_request_at + _MIN_REQUEST_INTERVAL - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            self._last_request_at = time.monotonic()
+
+    def _send(self, method: str, url: str, **kwargs) -> requests.Response:
+        """Paced, 429-backed-off, auth-checked request. 401 raises via _check_response
+        (no retry — no refresh endpoint documented, re-login is the only recovery)."""
+        session_call = self._session.get if method == "GET" else self._session.post
+        resp = None
+        for attempt in range(MAX_RETRIES):
+            self._pace()
+            resp = session_call(url, timeout=30, **kwargs)
+            resp = self._check_response(resp)
+
+            if resp.status_code == 429:
+                retry_after = float(resp.headers.get("Retry-After", BACKOFF_BASE ** (attempt + 1)))
+                if retry_after > MAX_WAIT_SECS:
+                    logger.error("429 Retry-After=%s exceeds MAX_WAIT_SECS — aborting", retry_after)
+                    return resp
+                if attempt < MAX_RETRIES - 1:
+                    logger.warning("429 — waiting %.0fs (attempt %d)", retry_after, attempt + 1)
+                    time.sleep(retry_after)
+                    continue
+
+            return resp
+        return resp
 
     @property
     def is_authenticated(self) -> bool:
@@ -133,11 +196,8 @@ class BlinkitClient:
         return headers
 
     def get(self, path: str, params: dict | None = None, entity: bool = True) -> requests.Response:
-        """GET against BASE_URL + path, with auth headers attached. 401 means re-login (no refresh endpoint documented)."""
-        resp = self._session.get(f"{BASE_URL}{path}", params=params, headers=self.auth_headers(entity), timeout=30)
-        if resp.status_code == 401:
-            logger.warning("Blinkit 401 — token expired, re-login required")
-        return resp
+        """Paced GET against BASE_URL + path, with auth headers, 429-backoff, and 401 handling."""
+        return self._send("GET", f"{BASE_URL}{path}", params=params, headers=self.auth_headers(entity))
 
     def find_po_id(self, po_number: str, months_back: int = 18) -> str | None:
         """Resolves a human PO number to Blinkit's po_id via the B2B orders list — confirmed
@@ -150,11 +210,11 @@ class BlinkitClient:
         limit = 200
         offset = 0
         while True:
-            resp = self._session.post(
+            resp = self._send(
+                "POST",
                 f"{BASE_URL}/seller-hub/api/b2b-orders/list",
                 json={"order_date": {"start": str(start), "end": str(end)}, "offset": offset, "limit": limit},
                 headers=headers,
-                timeout=30,
             )
             resp.raise_for_status()
             items = resp.json()["data"]["items"]
@@ -213,6 +273,7 @@ def demo() -> None:
     assert _extract_presigned_url({"nothing": "here"}) is None
 
     class FakeResponse:
+        status_code = 200
         def __init__(self, payload):
             self._payload = payload
         def raise_for_status(self):
@@ -230,6 +291,31 @@ def demo() -> None:
     c3._session.post = fake_post
     assert c3.find_po_id("1723710043291") == "1723710043291"
     assert c3.find_po_id("NOPE") is None
+
+    # 401 → BlinkitAuthExpired + token cleared, routed via a scratch tokens file so this
+    # doesn't touch the real cached session.
+    global _TOKENS_FILE
+    real_tokens_file = _TOKENS_FILE
+    _TOKENS_FILE = "/tmp/blinkit_client_demo_scratch_tokens.json"
+    try:
+        c4 = BlinkitClient(email="test@example.com")
+        c4._access_token = "fake-token"
+
+        class FakeUnauthedResponse:
+            status_code = 401
+
+        c4._session.get = lambda *a, **kw: FakeUnauthedResponse()
+        try:
+            c4.get("/some/path")
+            raise AssertionError("expected BlinkitAuthExpired on 401")
+        except BlinkitAuthExpired:
+            pass
+        assert c4._access_token is None and not c4.is_authenticated
+        assert not os.path.exists(_TOKENS_FILE)
+    finally:
+        if os.path.exists(_TOKENS_FILE):
+            os.remove(_TOKENS_FILE)
+        _TOKENS_FILE = real_tokens_file
 
     print("blinkit_client demo OK")
 
