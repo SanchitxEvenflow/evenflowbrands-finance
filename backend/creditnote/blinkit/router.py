@@ -1,5 +1,6 @@
 import logging
 
+import requests
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -44,32 +45,34 @@ def process_po(payload: ProcessPoRequest):
     if not blinkit_client.is_authenticated:
         raise HTTPException(status_code=401, detail="Not logged in to Blinkit — call /blinkit/send-otp then /blinkit/verify-otp first")
 
-    invoices = blinkit_zoho.find_invoices_by_po(payload.po_number)
-    if not invoices:
-        raise HTTPException(status_code=404, detail=f"No Zoho invoice found for PO {payload.po_number!r}")
-    invoice = blinkit_zoho.get_invoice(invoices[0]["invoice_id"])
-
     try:
-        po_id = blinkit_client.find_po_id(payload.po_number)
-    except BlinkitAuthExpired as exc:
-        raise HTTPException(status_code=401, detail=str(exc))
-    if not po_id:
-        raise HTTPException(status_code=404, detail=f"No Blinkit PO found for {payload.po_number!r}")
+        invoices = blinkit_zoho.find_invoices_by_po(payload.po_number)
+        if not invoices:
+            raise HTTPException(status_code=404, detail=f"No Zoho invoice found for PO {payload.po_number!r}")
+        invoice = blinkit_zoho.get_invoice(invoices[0]["invoice_id"])
 
-    try:
-        pdf_bytes = blinkit_client.download_discrepancy_note_pdf(po_id, invoice["invoice_number"])
-    except BlinkitAuthExpired as exc:
-        raise HTTPException(status_code=401, detail=str(exc))
-    except Exception as exc:
-        logger.exception("Discrepancy note download failed for PO %s", payload.po_number)
-        raise HTTPException(status_code=502, detail=f"Blinkit discrepancy note download failed: {exc}")
+        try:
+            po_id = blinkit_client.find_po_id(payload.po_number)
+        except BlinkitAuthExpired as exc:
+            raise HTTPException(status_code=401, detail=str(exc))
+        if not po_id:
+            raise HTTPException(status_code=404, detail=f"No Blinkit PO found for {payload.po_number!r}")
 
-    dn = parse_discrepancy_note(pdf_bytes)
-    if not dn["line_items"]:
-        raise HTTPException(status_code=422, detail=f"Discrepancy note {dn['dn_id']} parsed with no line items")
+        try:
+            pdf_bytes = blinkit_client.download_discrepancy_note_pdf(po_id, invoice["invoice_number"])
+        except BlinkitAuthExpired as exc:
+            raise HTTPException(status_code=401, detail=str(exc))
 
-    try:
+        dn = parse_discrepancy_note(pdf_bytes)
+        if not dn["line_items"]:
+            raise HTTPException(status_code=422, detail=f"Discrepancy note {dn['dn_id']} parsed with no line items")
+
         creditnotes = blinkit_zoho.create_credit_note(dn, invoice, pdf_bytes=pdf_bytes, pdf_filename=f"{dn['dn_id']}.pdf")
+    except HTTPException:
+        raise
+    except requests.RequestException as exc:
+        logger.exception("Zoho/Blinkit request failed for PO %s", payload.po_number)
+        raise HTTPException(status_code=502, detail=f"Upstream request failed: {exc}")
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
