@@ -119,8 +119,9 @@ def demo() -> None:
         pass
 
     # create_credit_note: one credit note per non-empty bucket, PDF attached to each
-    client._session.get = lambda url, params, headers, timeout: FakeResponse(
-        200, {"contact": {"addresses": [{"address_id": "addr-jhajjar", "zip": "124108"}]}},
+    client._session.get = lambda url, params, headers, timeout: (
+        FakeResponse(200, {"item": {"purchase_rate": 1.0}}) if "/items/" in url
+        else FakeResponse(200, {"contact": {"addresses": [{"address_id": "addr-jhajjar", "zip": "124108"}]}})
     )
     post_state = {"cn_calls": 0, "attached_filenames": []}
 

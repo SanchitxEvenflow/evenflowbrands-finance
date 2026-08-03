@@ -135,6 +135,17 @@ class MarketplaceZohoClient(ABC):
             data = resp.json()
             if not resp.ok or data.get("code", 0) != 0:
                 self.logger.warning("Failed to set cost price on item %s: %s", item_id, data)
+                return
+            # Zoho can return code 0 without the value sticking (e.g. item-group variants) —
+            # confirm via a follow-up read instead of trusting the write response alone.
+            check = self._get(f"{ZOHO_API_BASE}/items/{item_id}", params={"organization_id": settings.org_id}).json()
+            actual = check.get("item", {}).get("purchase_rate")
+            if actual != cost_price:
+                self.logger.warning(
+                    "Cost price PUT on item %s returned code 0 but purchase_rate reads back as %r (wanted %r) — "
+                    "likely an item-group variant that ignores the plain /items update",
+                    item_id, actual, cost_price,
+                )
         except requests.RequestException:
             self.logger.exception("Failed to set cost price on item %s", item_id)
 
@@ -290,11 +301,12 @@ class MarketplaceZohoClient(ABC):
                 {"api_name": "cf_goods_status", "value": goods_status},
             ],
             "line_items": line_items,
-            # Shipping recipient GST details copied straight from the invoice being fetched —
-            # blank on the invoice means blank here too, no fallback to the billing GST fields.
-            "shipping_gst_no": invoice.get("shipping_gst_no", ""),
-            "shipping_trader_name": invoice.get("shipping_trader_name", ""),
-            "shipping_legal_name": invoice.get("shipping_legal_name", ""),
+            # Shipping recipient GST details: use the invoice's own shipping GST if it has one,
+            # else fall back to its billing GST — same customer/address in practice, and Zoho
+            # otherwise leaves the shipping GST section blank on the credit note.
+            "shipping_gst_no": invoice.get("shipping_gst_no") or invoice.get("gst_no", ""),
+            "shipping_trader_name": invoice.get("shipping_trader_name") or invoice.get("company_name", ""),
+            "shipping_legal_name": invoice.get("shipping_legal_name") or invoice.get("legal_name", ""),
         }
         if billing_address_id:
             payload["billing_address_id"] = billing_address_id
@@ -429,6 +441,17 @@ def demo() -> None:
         assert other_payload["shipping_address_id"] == "addr-1"  # shipping mirrors billing
         assert {"api_name": "cf_goods_status", "value": "Pending"} in other_payload["custom_fields"]
 
+        # no shipping GST on invoice -> falls back to billing GST fields, not left blank
+        no_shipping_gst_invoice = {**invoice, "shipping_gst_no": "", "shipping_trader_name": "",
+                                    "shipping_legal_name": "", "gst_no": "36AAKCC0275A1Z2",
+                                    "company_name": "Some Co", "legal_name": "Some Co Pvt Ltd"}
+        fallback_payload = client.build_credit_note_payload(
+            dn, no_shipping_gst_invoice, short_items, UNITED_WH_LOCATION_ID,
+        )
+        assert fallback_payload["shipping_gst_no"] == "36AAKCC0275A1Z2"
+        assert fallback_payload["shipping_trader_name"] == "Some Co"
+        assert fallback_payload["shipping_legal_name"] == "Some Co Pvt Ltd"
+
         bad_items = [{**short_items[0], "code": "NOPE"}]
         try:
             client.build_credit_note_payload(dn, invoice, bad_items, UNITED_WH_LOCATION_ID)
@@ -441,9 +464,12 @@ def demo() -> None:
         assert _match_billing_address_id([], None) is None
 
         # create_credit_note: one credit note per non-empty bucket, PDF attached to each
-        client._session.get = lambda url, params, headers, timeout: FakeResponse(
-            200, {"contact": {"addresses": [{"address_id": "a1", "zip": "560095"}]}},
-        )
+        def fake_get(url, params, headers, timeout):
+            if "/items/" in url:
+                return FakeResponse(200, {"item": {"purchase_rate": 1.0}})
+            return FakeResponse(200, {"contact": {"addresses": [{"address_id": "a1", "zip": "560095"}]}})
+
+        client._session.get = fake_get
         post_state = {"cn_calls": 0, "attached_filenames": []}
 
         def fake_post(url, params, headers, timeout, json=None, files=None):

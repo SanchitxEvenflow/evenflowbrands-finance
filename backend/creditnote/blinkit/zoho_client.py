@@ -125,8 +125,9 @@ def demo() -> None:
     # create_credit_note: resolves billing_address_id via get_contact, one credit note per
     # non-empty warehouse bucket, PDF attached to each
     stored_addresses = [{"address_id": "addr-pune", "zip": "410506"}, {"address_id": "addr-lucknow", "zip": "227101"}]
-    client._session.get = lambda url, params, headers, timeout: FakeResponse(
-        200, {"contact": {"addresses": stored_addresses}},
+    client._session.get = lambda url, params, headers, timeout: (
+        FakeResponse(200, {"item": {"purchase_rate": 1.0}}) if "/items/" in url
+        else FakeResponse(200, {"contact": {"addresses": stored_addresses}})
     )
     post_state = {"cn_calls": 0, "attached_filenames": []}
 
