@@ -14,8 +14,11 @@ interface ProcessResult {
   poNumber: string;
   status: "pending" | "processing" | "success" | "error";
   message?: string;
+  invoiceId?: string;
   creditNotes?: { creditnote_id: string; creditnote_number: string }[];
 }
+
+type ApplyStatus = "busy" | "applied" | "error";
 
 export default function SwiggyCreditNote() {
   const [rawInput, setRawInput] = useState("");
@@ -29,10 +32,35 @@ export default function SwiggyCreditNote() {
   const [toast, setToast] = useState<{ type: ToastType; msg: string } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [applyStatus, setApplyStatus] = useState<Record<string, ApplyStatus>>({});
+
   const showToast = (type: ToastType, msg: string) => {
     setToast({ type, msg });
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 4000);
+  };
+
+  const handleApply = async (creditnoteId: string, invoiceId: string) => {
+    setApplyStatus((prev) => ({ ...prev, [creditnoteId]: "busy" }));
+    try {
+      const resp = await fetch(`${API_BASE}/instamart/apply-credit-note`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ creditnote_id: creditnoteId, invoice_id: invoiceId }),
+      });
+      if (!resp.ok) {
+        let detail = `Error ${resp.status}`;
+        try {
+          detail = (await resp.json()).detail ?? detail;
+        } catch {}
+        throw new Error(detail);
+      }
+      setApplyStatus((prev) => ({ ...prev, [creditnoteId]: "applied" }));
+      showToast("success", "Credit note applied to invoice!");
+    } catch (err: any) {
+      setApplyStatus((prev) => ({ ...prev, [creditnoteId]: "error" }));
+      showToast("error", err.message || "Failed to apply credit note");
+    }
   };
 
   const parseNumbers = useCallback((raw: string) => {
@@ -118,6 +146,7 @@ export default function SwiggyCreditNote() {
         const data = await resp.json();
         updatedResults[i].status = "success";
         updatedResults[i].creditNotes = data.credit_notes || [];
+        updatedResults[i].invoiceId = data.invoice_id;
         updatedResults[i].message = `Invoice: ${data.invoice_number || 'N/A'}`;
       } catch (err: any) {
         updatedResults[i].status = "error";
@@ -274,12 +303,28 @@ export default function SwiggyCreditNote() {
                       </td>
                       <td className="px-6 py-3 text-slate-600">
                         {res.creditNotes && res.creditNotes.length > 0 ? (
-                          <div className="flex flex-col gap-1">
-                            {res.creditNotes.map(cn => (
-                              <span key={cn.creditnote_id} className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">
-                                {cn.creditnote_number}
-                              </span>
-                            ))}
+                          <div className="flex flex-col gap-1.5">
+                            {res.creditNotes.map(cn => {
+                              const status = applyStatus[cn.creditnote_id];
+                              return (
+                                <div key={cn.creditnote_id} className="flex items-center gap-2">
+                                  <span className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">
+                                    {cn.creditnote_number}
+                                  </span>
+                                  {status === "applied" ? (
+                                    <span className="text-xs text-green-600 font-medium">Applied ✓</span>
+                                  ) : (
+                                    <button
+                                      onClick={() => res.invoiceId && handleApply(cn.creditnote_id, res.invoiceId)}
+                                      disabled={!res.invoiceId || status === "busy"}
+                                      className="text-xs text-indigo-600 hover:text-indigo-800 disabled:text-slate-300 font-medium underline underline-offset-2"
+                                    >
+                                      {status === "busy" ? "Applying…" : status === "error" ? "Retry apply" : "Apply to Invoice"}
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         ) : "-"}
                       </td>
