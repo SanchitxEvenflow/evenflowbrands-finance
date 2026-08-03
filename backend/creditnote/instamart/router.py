@@ -17,6 +17,12 @@ class ProcessPoRequest(BaseModel):
     po_number: str
 
 
+class ApplyCreditNoteRequest(BaseModel):
+    creditnote_id: str
+    invoice_id: str
+    amount: float | None = None
+
+
 @router.post("/process-po", summary="PO number in, draft Zoho credit note out")
 def process_po(payload: ProcessPoRequest):
     try:
@@ -45,6 +51,7 @@ def process_po(payload: ProcessPoRequest):
 
     return {
         "po_number": payload.po_number,
+        "invoice_id": invoice["invoice_id"],
         "invoice_number": invoice["invoice_number"],
         "dn_id": dn["dn_id"],
         "credit_notes": [
@@ -52,3 +59,15 @@ def process_po(payload: ProcessPoRequest):
             for cn in creditnotes
         ],
     }
+
+
+@router.post("/apply-credit-note", summary="Apply a pushed credit note's balance to its invoice")
+def apply_credit_note(payload: ApplyCreditNoteRequest):
+    try:
+        result = instamart_zoho.apply_credit_note_to_invoice(payload.creditnote_id, payload.invoice_id, payload.amount)
+    except requests.RequestException as exc:
+        logger.exception("Zoho request failed applying credit note %s", payload.creditnote_id)
+        raise HTTPException(status_code=502, detail=f"Upstream request failed: {exc}")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return result

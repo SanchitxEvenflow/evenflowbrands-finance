@@ -138,6 +138,39 @@ class MarketplaceZohoClient(ABC):
         except requests.RequestException:
             self.logger.exception("Failed to set cost price on item %s", item_id)
 
+    def get_credit_note(self, creditnote_id: str) -> dict:
+        """Full credit note JSON — carries `status` ("draft"/"open"/...) and `balance`."""
+        resp = self._get(f"{ZOHO_API_BASE}/creditnotes/{creditnote_id}", params={"organization_id": settings.org_id})
+        resp.raise_for_status()
+        return resp.json()["creditnote"]
+
+    def apply_credit_note_to_invoice(self, creditnote_id: str, invoice_id: str, amount: float | None = None) -> dict:
+        """Applies a pushed credit note's balance against its invoice. Setting `invoice_id` at
+        creation only references the invoice — it doesn't touch its balance, so this is a
+        separate Zoho call. Only open (non-draft) credit notes can be applied, so drafts are
+        opened first. Defaults to applying the note's full remaining balance."""
+        creditnote = self.get_credit_note(creditnote_id)
+        if creditnote["status"] == "draft":
+            resp = self._post(
+                f"{ZOHO_API_BASE}/creditnotes/{creditnote_id}/status/open",
+                params={"organization_id": settings.org_id}, json_body={},
+            )
+            data = resp.json()
+            if not resp.ok or data.get("code", 0) != 0:
+                raise RuntimeError(f"Zoho credit note open failed [{resp.status_code}]: {data}")
+
+        amount = creditnote["balance"] if amount is None else amount
+        resp = self._post(
+            f"{ZOHO_API_BASE}/creditnotes/{creditnote_id}/invoices",
+            params={"organization_id": settings.org_id},
+            json_body={"invoices": [{"invoice_id": invoice_id, "amount_applied": amount}]},
+        )
+        data = resp.json()
+        if not resp.ok or data.get("code", 0) != 0:
+            raise RuntimeError(f"Zoho apply-credit-note failed [{resp.status_code}]: {data}")
+        self.logger.info("Applied %.2f from credit note %s to invoice %s", amount, creditnote_id, invoice_id)
+        return data
+
     def find_invoices_by_po(self, po_number: str) -> list[dict]:
         """Zoho invoices where the cf_customer_po_no custom field matches the buyer's PO number
         (reference_number is always blank on real invoices — the PO lives in this custom field)."""
@@ -434,6 +467,37 @@ def demo() -> None:
             f"{ZOHO_API_BASE}/items/ITEM-1", f"{ZOHO_API_BASE}/items/ITEM-2",
         }
         assert all(body == {"purchase_rate": 1.0} for _, body in put_calls)
+
+        # apply_credit_note_to_invoice: draft note gets opened, then applied for its balance
+        get_calls = []
+        client._session.get = lambda url, params, headers, timeout: (
+            get_calls.append(url) or FakeResponse(200, {"creditnote": {"status": "draft", "balance": 150.0}})
+        )
+        apply_calls = []
+
+        def fake_apply_post(url, params, headers, timeout, json=None, files=None):
+            apply_calls.append((url, json))
+            return FakeResponse(200, {"code": 0})
+
+        client._session.post = fake_apply_post
+        client.apply_credit_note_to_invoice("cn1", "INV-ID-1")
+        assert apply_calls[0][0].endswith("/creditnotes/cn1/status/open")
+        assert apply_calls[1] == (
+            f"{ZOHO_API_BASE}/creditnotes/cn1/invoices",
+            {"invoices": [{"invoice_id": "INV-ID-1", "amount_applied": 150.0}]},
+        )
+
+        # already-open note: no status/open call, explicit amount overrides balance
+        client._session.get = lambda url, params, headers, timeout: FakeResponse(
+            200, {"creditnote": {"status": "open", "balance": 150.0}},
+        )
+        apply_calls.clear()
+        client.apply_credit_note_to_invoice("cn2", "INV-ID-1", amount=75.0)
+        assert len(apply_calls) == 1
+        assert apply_calls[0] == (
+            f"{ZOHO_API_BASE}/creditnotes/cn2/invoices",
+            {"invoices": [{"invoice_id": "INV-ID-1", "amount_applied": 75.0}]},
+        )
     finally:
         token_manager.force_refresh = orig_force_refresh
 
