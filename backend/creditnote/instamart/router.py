@@ -32,7 +32,7 @@ def process_po(payload: ProcessPoRequest):
 
         dn = parse_discrepancy_note(pdf_bytes)
         if not dn["line_items"]:
-            raise HTTPException(status_code=422, detail=f"Discrepancy note {dn['dn_no']} parsed with no line items")
+            raise HTTPException(status_code=422, detail=f"Discrepancy note {dn['dn_id']} parsed with no line items")
 
         creditnotes = instamart_zoho.create_credit_note(dn, invoice, pdf_bytes=pdf_bytes, pdf_filename=pdf_filename)
     except HTTPException:
@@ -46,7 +46,7 @@ def process_po(payload: ProcessPoRequest):
     return {
         "po_number": payload.po_number,
         "invoice_number": invoice["invoice_number"],
-        "dn_no": dn["dn_no"],
+        "dn_id": dn["dn_id"],
         "credit_notes": [
             {"creditnote_id": cn["creditnote_id"], "creditnote_number": cn["creditnote_number"]}
             for cn in creditnotes

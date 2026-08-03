@@ -26,11 +26,11 @@ def parse_discrepancy_note(pdf_bytes: bytes) -> dict:
 def _parse_tables(tables: list[list[list[str | None]]]) -> dict:
     all_cells = [c.strip() for table in tables for row in table for c in row if c]
 
-    dn_no = None
+    dn_id = None
     detail_cell = next((c for c in all_cells if "DN No" in c), None)
     if detail_cell:
         m = re.search(r"DN No\s*:-\s*(\S+)", detail_cell)
-        dn_no = m.group(1) if m else None
+        dn_id = m.group(1) if m else None
 
     line_items = []
     header_found = False
@@ -60,7 +60,7 @@ def _parse_tables(tables: list[list[list[str | None]]]) -> dict:
             })
 
     return {
-        "dn_no": dn_no,
+        "dn_id": dn_id,
         "line_items": line_items,
     }
 
@@ -71,7 +71,7 @@ def demo() -> None:
     with open(fixture, "rb") as f:
         data = parse_discrepancy_note(f.read())
 
-    assert data["dn_no"] == "FC5-DN772809"
+    assert data["dn_id"] == "FC5-DN772809"
     assert len(data["line_items"]) == 1
 
     item = data["line_items"][0]
