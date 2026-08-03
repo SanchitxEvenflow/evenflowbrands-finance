@@ -22,6 +22,9 @@ class Settings(BaseSettings):
 
     blinkit_email: str = "invoicing@evenflowbrands.com"
 
+    swiggy: Optional[str] = None
+    swiggy_refresh_token: Optional[str] = None
+
     slack_webhook_url: str = ""
 
     model_config = {"env_file": _env_path, "extra": "ignore"}
