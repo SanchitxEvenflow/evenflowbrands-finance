@@ -1,6 +1,7 @@
 import base64
 import json
 import logging
+import threading
 import time
 
 import requests
@@ -36,22 +37,28 @@ class SwiggyGmailClient:
         self._session = requests.Session()
         self._access_token: str | None = None
         self._expires_at: float = 0
+        # FastAPI runs sync routes in a thread pool, so concurrent process-po calls hit this
+        # client from multiple threads at once — same guard blinkit_client's token refresh and
+        # the root Zoho token manager use, to stop N concurrent expiries from firing N redundant
+        # refreshes instead of one.
+        self._lock = threading.Lock()
 
     def _get_token(self) -> str:
-        if self._access_token and time.time() < self._expires_at:
+        with self._lock:
+            if self._access_token and time.time() < self._expires_at:
+                return self._access_token
+            creds = json.loads(settings.swiggy)["installed"]
+            resp = self._session.post(TOKEN_URL, data={
+                "client_id": creds["client_id"],
+                "client_secret": creds["client_secret"],
+                "refresh_token": settings.swiggy_refresh_token,
+                "grant_type": "refresh_token",
+            }, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+            self._access_token = data["access_token"]
+            self._expires_at = time.time() + data.get("expires_in", 3600) - 60
             return self._access_token
-        creds = json.loads(settings.swiggy)["installed"]
-        resp = self._session.post(TOKEN_URL, data={
-            "client_id": creds["client_id"],
-            "client_secret": creds["client_secret"],
-            "refresh_token": settings.swiggy_refresh_token,
-            "grant_type": "refresh_token",
-        }, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-        self._access_token = data["access_token"]
-        self._expires_at = time.time() + data.get("expires_in", 3600) - 60
-        return self._access_token
 
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self._get_token()}"}
@@ -165,6 +172,27 @@ def demo() -> None:
             raise AssertionError("expected ValueError for no matching mail")
         except ValueError:
             pass
+
+        # concurrency: N threads racing an expired token must trigger exactly one refresh,
+        # not N — this is what _lock in _get_token exists to guarantee.
+        race_client = SwiggyGmailClient()
+        race_calls = {"token": 0}
+        release = threading.Event()
+
+        def slow_post(url, data, timeout):
+            race_calls["token"] += 1
+            release.wait(timeout=2)  # hold the lock so other threads pile up behind it
+            return FakeResponse({"access_token": "race-tok", "expires_in": 3600})
+
+        race_client._session.post = slow_post
+        threads = [threading.Thread(target=race_client._get_token) for _ in range(8)]
+        for t in threads:
+            t.start()
+        time.sleep(0.05)
+        release.set()
+        for t in threads:
+            t.join(timeout=2)
+        assert race_calls["token"] == 1, f"expected 1 refresh, got {race_calls['token']}"
     finally:
         config_module.settings.swiggy = orig_swiggy
         config_module.settings.swiggy_refresh_token = orig_refresh
