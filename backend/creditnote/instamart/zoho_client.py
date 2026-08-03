@@ -132,6 +132,7 @@ def demo() -> None:
         return FakeResponse(200, {"code": 0, "creditnote": {"creditnote_id": f"cn{post_state['cn_calls']}"}})
 
     client._session.post = fake_post
+    client._session.put = lambda url, params, headers, timeout, json=None: FakeResponse(200, {"code": 0})
     created = client.create_credit_note(dn, invoice, pdf_bytes=b"%PDF-fake", pdf_filename="FC5-DN772809.pdf")
     assert post_state["cn_calls"] == 2
     assert {c["creditnote_id"] for c in created} == {"cn1", "cn2"}

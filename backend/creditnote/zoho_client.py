@@ -94,6 +94,50 @@ class MarketplaceZohoClient(ABC):
 
         return resp
 
+    def _put(self, url: str, params: dict, json_body: dict) -> requests.Response:
+        for attempt in range(MAX_RETRIES):
+            headers = {
+                "Authorization": f"Zoho-oauthtoken {token_manager.get_token()}",
+                "Content-Type": "application/json",
+            }
+            resp = self._session.put(url, params=params, json=json_body, headers=headers, timeout=30)
+
+            if resp.status_code == 401:
+                self.logger.warning("401 — refreshing Zoho token")
+                token_manager.force_refresh()
+                continue
+
+            if resp.status_code == 429:
+                retry_after = float(resp.headers.get("Retry-After", BACKOFF_BASE ** (attempt + 1)))
+                if retry_after > MAX_WAIT_SECS:
+                    self.logger.error("429 Retry-After=%s exceeds MAX_WAIT_SECS — aborting", retry_after)
+                    return resp
+                if attempt < MAX_RETRIES - 1:
+                    self.logger.warning("429 — waiting %.0fs (attempt %d)", retry_after, attempt + 1)
+                    time.sleep(retry_after)
+                    continue
+
+            return resp
+
+        return resp
+
+    def _set_item_cost_price(self, item_id: str, cost_price: float = 1.0) -> None:
+        """Hardcodes purchase_rate ("Cost Price" under each line item in the Zoho UI) on the
+        item master. Marketplace SKUs routed through this flow usually never get a cost price
+        set, and Zoho wants some basis for COGS/valuation — best-effort, a failure here logs
+        and moves on rather than blocking the credit note itself."""
+        try:
+            resp = self._put(
+                f"{ZOHO_API_BASE}/items/{item_id}",
+                params={"organization_id": settings.org_id},
+                json_body={"purchase_rate": cost_price},
+            )
+            data = resp.json()
+            if not resp.ok or data.get("code", 0) != 0:
+                self.logger.warning("Failed to set cost price on item %s: %s", item_id, data)
+        except requests.RequestException:
+            self.logger.exception("Failed to set cost price on item %s", item_id)
+
     def find_invoices_by_po(self, po_number: str) -> list[dict]:
         """Zoho invoices where the cf_customer_po_no custom field matches the buyer's PO number
         (reference_number is always blank on real invoices — the PO lives in this custom field)."""
@@ -213,9 +257,17 @@ class MarketplaceZohoClient(ABC):
                 {"api_name": "cf_goods_status", "value": goods_status},
             ],
             "line_items": line_items,
+            # Shipping recipient GST details copied straight from the invoice being fetched —
+            # blank on the invoice means blank here too, no fallback to the billing GST fields.
+            "shipping_gst_no": invoice.get("shipping_gst_no", ""),
+            "shipping_trader_name": invoice.get("shipping_trader_name", ""),
+            "shipping_legal_name": invoice.get("shipping_legal_name", ""),
         }
         if billing_address_id:
             payload["billing_address_id"] = billing_address_id
+            # Credit note's shipping address always mirrors billing, regardless of what the
+            # source invoice's own shipping address was.
+            payload["shipping_address_id"] = billing_address_id
         return payload
 
     def create_credit_note(
@@ -237,6 +289,10 @@ class MarketplaceZohoClient(ABC):
             self.build_credit_note_payload(dn, invoice, items, location_id, billing_address_id)
             for items, location_id in buckets if items
         ]
+
+        item_ids = {li["item_id"] for payload in payloads for li in payload["line_items"]}
+        for item_id in item_ids:
+            self._set_item_cost_price(item_id)
 
         created = []
         for payload in payloads:
@@ -315,6 +371,8 @@ def demo() -> None:
         invoice = {
             "invoice_id": "INV-ID-1", "invoice_number": "INV-001", "customer_id": "CUST-1",
             "billing_address": {"zip": "560095"},
+            "shipping_gst_no": "27AAFCG9846E1ZB", "shipping_trader_name": "Acme Trading",
+            "shipping_legal_name": "Acme Pvt Ltd",
             "line_items": [
                 {"code": "A1", "item_id": "ITEM-1", "name": "Item A1", "rate": 10.0, "tax_id": "TAX-1"},
                 {"code": "A2", "item_id": "ITEM-2", "name": "Item A2", "rate": 20.0, "tax_id": "TAX-1"},
@@ -326,11 +384,16 @@ def demo() -> None:
         assert short_payload["line_items"][0]["item_id"] == "ITEM-1"
         assert {"api_name": "cf_goods_status", "value": "Shortage"} in short_payload["custom_fields"]
         assert "billing_address_id" not in short_payload
+        assert "shipping_address_id" not in short_payload  # no billing_address_id matched → nothing to mirror
+        assert short_payload["shipping_gst_no"] == "27AAFCG9846E1ZB"
+        assert short_payload["shipping_trader_name"] == "Acme Trading"
+        assert short_payload["shipping_legal_name"] == "Acme Pvt Ltd"
 
         other_payload = client.build_credit_note_payload(
             dn, invoice, other_items, RETURNS_WH_LOCATION_ID, billing_address_id="addr-1",
         )
         assert other_payload["billing_address_id"] == "addr-1"
+        assert other_payload["shipping_address_id"] == "addr-1"  # shipping mirrors billing
         assert {"api_name": "cf_goods_status", "value": "Pending"} in other_payload["custom_fields"]
 
         bad_items = [{**short_items[0], "code": "NOPE"}]
@@ -357,11 +420,20 @@ def demo() -> None:
             post_state["cn_calls"] += 1
             return FakeResponse(200, {"code": 0, "creditnote": {"creditnote_id": f"cn{post_state['cn_calls']}"}})
 
+        put_calls = []
+        client._session.put = lambda url, params, headers, timeout, json=None: (
+            put_calls.append((url, json)) or FakeResponse(200, {"code": 0})
+        )
         client._session.post = fake_post
         created = client.create_credit_note(dn, invoice, pdf_bytes=b"%PDF-fake", pdf_filename="DN1.pdf")
         assert post_state["cn_calls"] == 2
         assert {c["creditnote_id"] for c in created} == {"cn1", "cn2"}
         assert post_state["attached_filenames"] == ["DN1.pdf", "DN1.pdf"]
+        # cost price hardcoded to 1 on every distinct item used, once each
+        assert {url for url, _ in put_calls} == {
+            f"{ZOHO_API_BASE}/items/ITEM-1", f"{ZOHO_API_BASE}/items/ITEM-2",
+        }
+        assert all(body == {"purchase_rate": 1.0} for _, body in put_calls)
     finally:
         token_manager.force_refresh = orig_force_refresh
 
