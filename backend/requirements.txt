@@ -14,3 +14,6 @@ resend==2.32.2
 
 # XLSX export (TDS fetcher)
 openpyxl==3.1.5
+
+# PDF table parsing (Blinkit discrepancy notes)
+pdfplumber==0.11.10

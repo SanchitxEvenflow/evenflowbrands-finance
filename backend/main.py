@@ -25,6 +25,7 @@ logging.basicConfig(
 logger = logging.getLogger("main")
 
 from config import settings
+from creditnote.blinkit.router import router as blinkit_router
 from email_sender import send_email_with_pdfs
 from grnpush.router import router as grn_router
 from models import DownloadRequest, EmailRequest, EmailResponse
@@ -47,6 +48,7 @@ app.add_middleware(
 
 app.include_router(grn_router)
 app.include_router(tds_router)
+app.include_router(blinkit_router)
 
 
 @app.get("/health")

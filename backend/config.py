@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     unicommerce_base_url: str = "https://evenflow.unicommerce.com"
     unicommerce_client_id: str = "my-trusted-client"
 
+    blinkit_email: str = "invoicing@evenflowbrands.com"
+
     slack_webhook_url: str = ""
 
     model_config = {"env_file": _env_path, "extra": "ignore"}

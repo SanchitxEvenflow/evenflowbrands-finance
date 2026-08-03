@@ -1,4 +1,6 @@
+import json
 import logging
+import os
 import threading
 import time
 
@@ -21,14 +23,42 @@ BACKOFF_BASE = 2.0  # seconds
 # If Zoho's Retry-After exceeds this, it's an hourly quota — fail fast instead of hanging.
 MAX_WAIT_SECS = 30
 
+# Access tokens are cached to disk so short-lived one-off processes (scripts, CLI runs)
+# reuse the same token instead of each burning its own refresh call — repeated refreshes
+# in a short window trip Zoho's "too many requests continuously" block (confirmed live).
+_TOKEN_CACHE_FILE = os.path.join(os.path.dirname(__file__), "zoho_token_cache.json")
+_EXPIRY_BUFFER_SECS = 300  # refresh 5 min before actual expiry, not at the wire
+
 
 class ZohoTokenManager:
     def __init__(self):
         self._lock = threading.Lock()
         self._access_token: str | None = None
-        self.force_refresh()
+        self._expires_at: float = 0
+        if not self._load_cached_token():
+            self.force_refresh()
+
+    def _load_cached_token(self) -> bool:
+        if not os.path.exists(_TOKEN_CACHE_FILE):
+            return False
+        with open(_TOKEN_CACHE_FILE) as f:
+            data = json.load(f)
+        if data.get("expires_at", 0) - _EXPIRY_BUFFER_SECS <= time.time():
+            return False
+        self._access_token = data["access_token"]
+        self._expires_at = data["expires_at"]
+        logger.info("Reusing cached OAuth token (valid for another %.0fs)", self._expires_at - time.time())
+        return True
+
+    def _save_cached_token(self) -> None:
+        with open(_TOKEN_CACHE_FILE, "w") as f:
+            json.dump({"access_token": self._access_token, "expires_at": self._expires_at}, f)
 
     def get_token(self) -> str:
+        # ponytail: no cross-process lock on the refresh-check race, fine for this
+        # single-tenant local use — add one if this ever runs as multiple processes.
+        if time.time() >= self._expires_at - _EXPIRY_BUFFER_SECS:
+            self.force_refresh()
         return self._access_token
 
     def force_refresh(self) -> None:
@@ -52,7 +82,9 @@ class ZohoTokenManager:
                 logger.error("Token refresh failed: %s", data)
                 raise RuntimeError(f"Token refresh failed: {data}")
             self._access_token = data["access_token"]
-            logger.info("Token refreshed OK (expires in ~1 h)")
+            self._expires_at = time.time() + data.get("expires_in", 3600)
+            self._save_cached_token()
+            logger.info("Token refreshed OK (expires in ~%ds)", data.get("expires_in", 3600))
 
 
 class ZohoClient:
