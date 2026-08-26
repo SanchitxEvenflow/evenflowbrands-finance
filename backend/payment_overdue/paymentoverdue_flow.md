@@ -15,11 +15,11 @@ See `fetcher.fetch_unpaid_invoices`.
 
 Compared against `date.today()`, using each invoice's `due_date`:
 
-| Bucket      | Condition                          |
-|-------------|-------------------------------------|
-| `past`      | `due_date < today`                  |
-| `this_week` | `today <= due_date <= today + 7d`   |
-| `future`    | `due_date > today + 7d`             |
+| Bucket      | Condition                              |
+|-------------|------------------------------------------|
+| `past`      | `due_date <= today`                     |
+| `this_week` | `today + 1d <= due_date <= today + 7d`  |
+| `future`    | `due_date > today + 7d`                 |
 
 An invoice with no `due_date` (shouldn't happen in practice) is put in
 `past` with `days_overdue: null`.
