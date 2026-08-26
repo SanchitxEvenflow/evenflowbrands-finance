@@ -1,5 +1,6 @@
 """Fetch every unpaid invoice, bucketed by due date into past / this_week / future."""
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
@@ -20,6 +21,13 @@ BUCKET_NAMES = ("past", "this_week", "future")
 # trades freshness for near-zero Zoho calls on repeat views/refreshes.
 _CACHE_TTL_SECS = 30 * 60
 _cache: dict[str, tuple[float, dict]] = {}  # org_id -> (fetched_at, summary)
+_locks: dict[str, threading.Lock] = {}
+_locks_guard = threading.Lock()
+
+
+def _lock_for(org_id: str) -> threading.Lock:
+    with _locks_guard:
+        return _locks.setdefault(org_id, threading.Lock())
 
 
 def _fetch_page(org_id: str, page: int) -> dict:
@@ -91,20 +99,27 @@ def get_overdue_summary(org_id: str, force_refresh: bool = False) -> dict:
     if not force_refresh and cached and time.time() - cached[0] < _CACHE_TTL_SECS:
         return cached[1]
 
-    invoices = fetch_unpaid_invoices(org_id)
-    buckets = bucket_invoices(invoices)
-    kpis = {
-        name: {"count": len(invs), "amount": sum(inv["balance"] or 0 for inv in invs)}
-        for name, invs in buckets.items()
-    }
+    # Serialize per org_id so concurrent cold requests (two users loading at
+    # once) wait on one fetch instead of each running their own 14s Zoho pull.
+    with _lock_for(org_id):
+        cached = _cache.get(org_id)
+        if not force_refresh and cached and time.time() - cached[0] < _CACHE_TTL_SECS:
+            return cached[1]
 
-    summary = {
-        "invoices_checked": len(invoices),
-        "kpis": kpis,
-        "buckets": buckets,
-    }
-    _cache[org_id] = (time.time(), summary)
-    return summary
+        invoices = fetch_unpaid_invoices(org_id)
+        buckets = bucket_invoices(invoices)
+        kpis = {
+            name: {"count": len(invs), "amount": sum(inv["balance"] or 0 for inv in invs)}
+            for name, invs in buckets.items()
+        }
+
+        summary = {
+            "invoices_checked": len(invoices),
+            "kpis": kpis,
+            "buckets": buckets,
+        }
+        _cache[org_id] = (time.time(), summary)
+        return summary
 
 
 def demo() -> None:

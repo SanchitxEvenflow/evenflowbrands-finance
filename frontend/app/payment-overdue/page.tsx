@@ -117,6 +117,8 @@ export default function PaymentOverdue() {
     const rows = list.map((inv) => ({
       Customer: inv.customer_name,
       "Invoice Number": inv.invoice_number,
+      "Invoice Date": inv.date,
+      Status: inv.status,
       "Due Date": inv.due_date || "",
       "Days Overdue": inv.days_overdue ?? "",
       Balance: inv.balance,
@@ -324,7 +326,9 @@ export default function PaymentOverdue() {
                   <tr>
                     <th className="px-6 py-4 whitespace-nowrap">Customer</th>
                     <th className="px-6 py-4 whitespace-nowrap">Invoice Number</th>
-                    <th 
+                    <th className="px-6 py-4 whitespace-nowrap">Invoice Date</th>
+                    <th className="px-6 py-4 whitespace-nowrap">Status</th>
+                    <th
                       className="px-6 py-4 whitespace-nowrap cursor-pointer hover:bg-slate-100 transition-colors group select-none"
                       onClick={() => handleSort("due_date")}
                     >
@@ -346,6 +350,12 @@ export default function PaymentOverdue() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         {inv.invoice_number}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {inv.date}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap capitalize">
+                        {inv.status}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className={getDaysOverdueStyle(inv.days_overdue)}>
