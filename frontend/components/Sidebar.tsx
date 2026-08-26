@@ -29,6 +29,7 @@ export default function Sidebar() {
     },
     { name: "TDS Fetcher", href: "/tds-fetcher", icon: "🧾" },
     { name: "Extract VRET PDF", href: "/extract-vret-pdf", icon: "📄" },
+    { name: "Payment Overdue", href: "/payment-overdue", icon: "💸" },
   ];
 
   return (
