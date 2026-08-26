@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import * as XLSX from "xlsx";
+import { prefetchPaymentOverdue } from "../../lib/paymentOverdueCache";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -54,13 +56,12 @@ export default function PaymentOverdue() {
   const fetchData = async (forceRefresh = false) => {
     try {
       forceRefresh ? setRefreshing(true) : setLoading(true);
-      const res = await fetch(
-        `${API_BASE}/payment-overdue/summary${forceRefresh ? "?force_refresh=true" : ""}`
-      );
-      if (!res.ok) {
-        throw new Error("Failed to fetch payment overdue summary");
-      }
-      const json = await res.json();
+      const json = forceRefresh
+        ? await fetch(`${API_BASE}/payment-overdue/summary?force_refresh=true`).then((res) => {
+            if (!res.ok) throw new Error("Failed to fetch payment overdue summary");
+            return res.json();
+          })
+        : await prefetchPaymentOverdue();
       setData(json);
       setError(null);
     } catch (err: any) {
@@ -106,30 +107,26 @@ export default function PaymentOverdue() {
     }
   };
 
-  const exportCSV = () => {
+  const exportExcel = () => {
     if (!data) return;
-    const currentList = data.buckets[selectedBucket] || [];
-    if (currentList.length === 0) return;
+    let list = data.buckets[selectedBucket] || [];
+    const q = searchQuery.trim().toLowerCase();
+    if (q) list = list.filter((inv) => matchesSearch(inv, q));
+    if (list.length === 0) return;
 
-    const headers = ["Customer", "Invoice Number", "Due Date", "Days Overdue", "Balance", "Currency"];
-    const rows = currentList.map(inv => [
-      `"${inv.customer_name?.replace(/"/g, '""') || ''}"`,
-      inv.invoice_number,
-      inv.due_date || "",
-      inv.days_overdue ?? "",
-      inv.balance,
-      inv.currency_code
-    ]);
+    const rows = list.map((inv) => ({
+      Customer: inv.customer_name,
+      "Invoice Number": inv.invoice_number,
+      "Due Date": inv.due_date || "",
+      "Days Overdue": inv.days_overdue ?? "",
+      Balance: inv.balance,
+      Currency: inv.currency_code,
+    }));
 
-    const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.setAttribute("download", `payment_overdue_${selectedBucket}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const sheet = XLSX.utils.json_to_sheet(rows);
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, sheet, "Payment Overdue");
+    XLSX.writeFile(book, `payment_overdue_${selectedBucket}.xlsx`);
   };
 
   if (loading) {
@@ -155,11 +152,25 @@ export default function PaymentOverdue() {
 
   if (!data) return null;
 
+  const matchesSearch = (inv: Invoice, q: string) =>
+    inv.customer_name?.toLowerCase().includes(q) ||
+    inv.invoice_number?.toLowerCase().includes(q);
+
+  const bucketKPI = (bucket: BucketType): KPI => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return data.kpis[bucket];
+    const filtered = data.buckets[bucket].filter((inv) => matchesSearch(inv, q));
+    return {
+      count: filtered.length,
+      amount: filtered.reduce((sum, inv) => sum + inv.balance, 0),
+    };
+  };
+
   const kpis = [
     {
       id: "past" as BucketType,
       title: "Past Due",
-      data: data.kpis.past,
+      data: bucketKPI("past"),
       color: "bg-red-50 border-red-200 text-red-900",
       activeColor: "ring-2 ring-red-500 ring-offset-2",
       iconColor: "text-red-500",
@@ -167,7 +178,7 @@ export default function PaymentOverdue() {
     {
       id: "this_week" as BucketType,
       title: "Due This Week",
-      data: data.kpis.this_week,
+      data: bucketKPI("this_week"),
       color: "bg-amber-50 border-amber-200 text-amber-900",
       activeColor: "ring-2 ring-amber-500 ring-offset-2",
       iconColor: "text-amber-500",
@@ -175,7 +186,7 @@ export default function PaymentOverdue() {
     {
       id: "future" as BucketType,
       title: "Due Future",
-      data: data.kpis.future,
+      data: bucketKPI("future"),
       color: "bg-emerald-50 border-emerald-200 text-emerald-900",
       activeColor: "ring-2 ring-emerald-500 ring-offset-2",
       iconColor: "text-emerald-500",
@@ -186,10 +197,7 @@ export default function PaymentOverdue() {
 
   if (searchQuery.trim()) {
     const q = searchQuery.toLowerCase();
-    currentList = currentList.filter(inv => 
-      inv.customer_name?.toLowerCase().includes(q) || 
-      inv.invoice_number?.toLowerCase().includes(q)
-    );
+    currentList = currentList.filter((inv) => matchesSearch(inv, q));
   }
 
   if (sortField) {
@@ -296,11 +304,11 @@ export default function PaymentOverdue() {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="px-4 py-2 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 w-64"
               />
-              <button 
-                onClick={exportCSV}
+              <button
+                onClick={exportExcel}
                 className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
               >
-                Export CSV
+                Export Excel
               </button>
             </div>
           </div>

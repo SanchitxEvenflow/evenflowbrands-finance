@@ -3,9 +3,15 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect } from "react";
+import { prefetchPaymentOverdue } from "../lib/paymentOverdueCache";
 
 export default function Sidebar() {
   const pathname = usePathname();
+
+  useEffect(() => {
+    prefetchPaymentOverdue();
+  }, []);
 
   const links = [
     { name: "Email Credit Notes", href: "/credit-notes", icon: "📧" },
