@@ -6,10 +6,10 @@ from fastapi.responses import StreamingResponse
 
 from .extract_pdf import extract_pdf_rows, HEADERS
 
-router = APIRouter(prefix="/api/extract-vret-pdf", tags=["VRET PDF Extraction"])
+router = APIRouter(prefix="/api/extract-contracogs-pdf", tags=["ContraCoGS PDF Extraction"])
 
 @router.post("/upload")
-async def extract_vret_pdf(file: UploadFile = File(...)):
+async def extract_contracogs_pdf(file: UploadFile = File(...)):
     if not file.filename.endswith(".zip"):
         raise HTTPException(status_code=400, detail="Only ZIP files are supported.")
     
@@ -33,10 +33,9 @@ async def extract_vret_pdf(file: UploadFile = File(...)):
                 and not n.rsplit("/", 1)[-1].startswith("._")
             ]
             for name in names:
-                source_file = name.rsplit("/", 1)[-1]
                 try:
                     pdf_bytes = zf.read(name)
-                    rows = extract_pdf_rows(pdf_bytes, source_file)
+                    rows = extract_pdf_rows(pdf_bytes, name)
                     for row in rows:
                         writer.writerow(row)
                     processed_count += 1
@@ -53,7 +52,7 @@ async def extract_vret_pdf(file: UploadFile = File(...)):
         iter([csv_buffer.getvalue()]),
         media_type="text/csv",
         headers={
-            "Content-Disposition": f"attachment; filename=extracted_vret.csv",
+            "Content-Disposition": f"attachment; filename=extracted_contracogs.csv",
             "X-Processed-Count": str(processed_count),
             "X-Error-Count": str(len(errors)),
             "Access-Control-Expose-Headers": "X-Processed-Count, X-Error-Count",
