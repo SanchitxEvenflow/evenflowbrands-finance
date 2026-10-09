@@ -246,3 +246,6 @@ backend/creditnote/blinkit/EL-KA-CN27-00480.pdf
 backend/creditnote/blinkit/EL-KA-CN27-00477.pdf
 backend/creditnote/blinkit/D25497DN26001725.pdf
 backend/creditnote/instamart/Discrepancy_Note_FC5-DN772809.pdf
+
+# Browser network captures
+*.har
