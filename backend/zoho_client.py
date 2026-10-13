@@ -93,14 +93,19 @@ class ZohoClient:
         self._session = requests.Session()
 
     def _get(self, url: str, params: dict, accept: str = "application/json") -> requests.Response:
-        logger.debug("GET %s  params=%s", url, params)
+        return self._request("GET", url, params, accept=accept)
 
+    def _request(self, method: str, url: str, params: dict, json: dict | None = None,
+                 accept: str = "application/json", data: dict | None = None) -> requests.Response:
+        logger.debug("%s %s  params=%s", method, url, params)
+
+        # 401/429 are rejected before Zoho writes anything, so retrying a POST here can't duplicate it.
         for attempt in range(MAX_RETRIES):
             headers = {
                 "Authorization": f"Zoho-oauthtoken {self._tm.get_token()}",
                 "Accept": accept,
             }
-            resp = self._session.get(url, params=params, headers=headers, timeout=30)
+            resp = self._session.request(method, url, params=params, json=json, data=data, headers=headers, timeout=30)
 
             if resp.status_code == 401:
                 logger.warning("401 — refreshing token and retrying")

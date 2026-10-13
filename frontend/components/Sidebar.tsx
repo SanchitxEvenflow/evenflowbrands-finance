@@ -37,6 +37,7 @@ export default function Sidebar() {
     { name: "Extract VRET PDF", href: "/extract-vret-pdf", icon: "📄" },
     { name: "Extract ContraCoGS PDF", href: "/extract-contracogs-pdf", icon: "📑" },
     { name: "Payment Overdue", href: "/payment-overdue", icon: "💸" },
+    { name: "Vendor Payments", href: "/vendor-payments", icon: "💰" },
   ];
 
   return (
