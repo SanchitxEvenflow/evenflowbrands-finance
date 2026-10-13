@@ -6,13 +6,14 @@ import json as jsonlib
 import logging
 import sys
 import threading
+from collections import Counter
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
 import requests
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -47,6 +48,14 @@ class BulkPaymentRequest(BaseModel):
     pin: str = Field(pattern=r"^\d{6}$")  # Zoho HSBC Secret PIN: used for this batch only, never stored or logged
     rows: list[PaymentRow] = Field(min_length=1)
 
+    @field_validator("rows")
+    @classmethod
+    def _no_duplicate_vendors(cls, rows: list[PaymentRow]) -> list[PaymentRow]:
+        seen = Counter(r.vendor_name.strip().lower() for r in rows)
+        if dups := [n for n, c in seen.items() if c > 1]:
+            raise ValueError(f"Same vendor more than once in one batch: {', '.join(dups)}")
+        return rows
+
 
 class VerifyRequest(BaseModel):
     names: list[str] = Field(min_length=1)
@@ -70,7 +79,10 @@ def _zoho_json(method: str, path: str, params: dict | None = None, json: dict | 
 
 
 def _vendor(name: str) -> dict:
-    contacts = _zoho_json("GET", "/contacts", {"contact_name": name, "contact_type": "vendor"})["contacts"]
+    found = _zoho_json("GET", "/contacts", {"contact_name": name, "contact_type": "vendor"})["contacts"]
+    contacts = [c for c in found if c.get("status") == "active"]
+    if found and not contacts:
+        raise RuntimeError(f"Vendor {name!r} is inactive in Zoho")
     if len(contacts) != 1:
         raise RuntimeError(f"{len(contacts)} vendors named {name!r} in Zoho (need exactly 1)")
     return contacts[0]

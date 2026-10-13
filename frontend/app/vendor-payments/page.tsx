@@ -33,22 +33,41 @@ interface Result {
 
 const emptyRow = (): Row => ({ vendor_name: "", amount: "", bank_account_id: "" });
 
-// Columns found by header ("vendor"/"name", "amount"); a file with no header row is read as name, amount.
-function parseVendorCsv(text: string): Row[] {
+const TEMPLATE_HEADER = ["Vendor Name", "Amount"];
+
+const downloadTemplate = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([`${TEMPLATE_HEADER.join(",")}\n`], { type: "text/csv" }));
+  a.download = "vendor_payments_template.csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+// Strict: header must be exactly the template's, every row a vendor name and a plain amount (e.g. 12500 or 12500.50).
+// Any problem rejects the whole file, so a half-read CSV never reaches the payment table.
+function parseVendorCsv(text: string): { rows: Row[]; errors: string[] } {
   const book = XLSX.read(text, { type: "string", raw: true });
-  const lines: string[][] = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]], { header: 1, raw: false, defval: "" });
-  const head = (lines[0] ?? []).map((c) => String(c).toLowerCase());
-  const amountCol = head.findIndex((c) => c.includes("amount"));
-  const hasHeader = amountCol !== -1;
-  const nameCol = hasHeader ? head.findIndex((c) => c.includes("vendor") || c.includes("name")) : 0;
-  return (hasHeader ? lines.slice(1) : lines)
-    .map((l) => ({
-      vendor_name: String(l[nameCol] ?? "").trim(),
-      amount: String(l[hasHeader ? amountCol : 1] ?? "").replace(/[^0-9.]/g, ""),
-      bank_account_id: "",
-    }))
-    .filter((r) => r.vendor_name || r.amount);
+  const lines: string[][] = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]], { header: 1, raw: false, defval: "", blankrows: false });
+  const head = (lines[0] ?? []).map((c) => String(c).trim());
+  // Blank cells past the template columns are padding from a longer data row, not a header problem.
+  if (TEMPLATE_HEADER.some((c, i) => head[i] !== c) || head.slice(TEMPLATE_HEADER.length).some(Boolean))
+    return { rows: [], errors: [`Header must be exactly "${TEMPLATE_HEADER.join(",")}" — download the template`] };
+  const errors: string[] = [];
+  const rows = lines.slice(1).map((l, i) => {
+    const [name = "", rawAmount = "", ...extra] = l.map((c) => String(c).trim());
+    const amount = rawAmount.replace(/,/g, "");
+    const at = `Row ${i + 2}`;
+    if (extra.some(Boolean)) errors.push(`${at}: extra columns (amount with commas must be in quotes, e.g. "12,500")`);
+    if (!name) errors.push(`${at}: vendor name missing`);
+    // Commas allowed as digit grouping (12,500 or 1,25,000), stripped before use.
+    if (!/^\d+(,\d+)*(\.\d{1,2})?$/.test(rawAmount) || Number(amount) <= 0) errors.push(`${at}: amount "${rawAmount}" is not a positive number`);
+    return { vendor_name: name, amount, bank_account_id: "" };
+  });
+  if (!rows.length) errors.push("No vendor rows found in CSV");
+  return { rows, errors };
 }
+
+const vendorKey = (name: string) => name.trim().toLowerCase();
 
 const formatINR = (n: number) =>
   `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
@@ -75,10 +94,16 @@ export default function VendorPaymentsPage() {
 
   const filled = rows.filter((r) => r.vendor_name.trim() && Number(r.amount) > 0);
   const total = filled.reduce((sum, r) => sum + Number(r.amount), 0);
-  const allVerified = filled.length > 0 && filled.every((r) => r.bank_account_id);
+  // Same vendor twice in one batch is almost always a mistake: flag the rows and block sending until merged/removed.
+  const counts = new Map<string, number>();
+  rows.forEach((r) => r.vendor_name.trim() && counts.set(vendorKey(r.vendor_name), (counts.get(vendorKey(r.vendor_name)) ?? 0) + 1));
+  const isDup = (r: Row) => (counts.get(vendorKey(r.vendor_name)) ?? 0) > 1;
+  const hasDups = rows.some(isDup);
+  const allVerified = filled.length > 0 && !hasDups && filled.every((r) => r.bank_account_id);
 
   const verify = async () => {
     if (filled.length === 0) return setErrorMsg("Add at least one vendor with an amount");
+    if (hasDups) return setErrorMsg("Same vendor appears more than once — merge or remove the flagged rows");
     setVerifying(true);
     setErrorMsg(null);
     try {
@@ -107,13 +132,15 @@ export default function VendorPaymentsPage() {
 
   const loadCsv = async (file: File | undefined) => {
     if (!file) return;
-    const parsed = parseVendorCsv(await file.text());
+    const { rows: parsed, errors } = parseVendorCsv(await file.text());
     setResults(null);
-    setErrorMsg(parsed.length ? null : "No vendor rows found in CSV");
-    if (parsed.length) setRows(parsed);
+    if (errors.length) return setErrorMsg(`CSV rejected — ${errors.join("; ")}`);
+    setErrorMsg(null);
+    setRows(parsed);
   };
 
   const submit = async () => {
+    if (hasDups) return setErrorMsg("Same vendor appears more than once — merge or remove the flagged rows");
     if (!allVerified) return setErrorMsg("Verify vendors and pick a bank account for every row");
     if (!/^\d{6}$/.test(pin)) return setErrorMsg("Enter your 6-digit Zoho HSBC Secret PIN");
     if (!confirm(`SEND ${filled.length} payment(s) totalling ${formatINR(total)} from HSBC to the bank accounts shown? Money will move and this can't be undone.`)) return;
@@ -168,9 +195,10 @@ export default function VendorPaymentsPage() {
             </thead>
             <tbody>
               {rows.map((row, i) => (
-                <tr key={i}>
+                <tr key={i} className={isDup(row) ? "bg-red-50" : ""}>
                   <td className="pr-2 py-1">
                     <input value={row.vendor_name} onChange={(e) => updateRow(i, "vendor_name", e.target.value)} disabled={busy} className={`${inputCls} w-full`} />
+                    {isDup(row) && <span className="text-red-600 text-xs">Duplicate vendor in this batch</span>}
                   </td>
                   <td className="pr-2 py-1">
                     <input type="number" min="0" step="0.01" value={row.amount} onChange={(e) => updateRow(i, "amount", e.target.value)} disabled={busy} className={`${inputCls} w-full text-right`} />
@@ -211,6 +239,9 @@ export default function VendorPaymentsPage() {
               <input type="file" accept=".csv,text/csv" className="hidden" disabled={busy}
                 onChange={(e) => { loadCsv(e.target.files?.[0]); e.target.value = ""; }} />
             </label>
+            <button onClick={downloadTemplate} className="text-indigo-600 font-semibold text-sm">
+              ⬇ CSV Template
+            </button>
             </div>
             <div className="flex items-center gap-3">
               <span className="text-slate-600 text-sm">
