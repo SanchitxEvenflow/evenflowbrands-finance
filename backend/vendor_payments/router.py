@@ -32,7 +32,7 @@ LOCATION_ID = "727927000000014347"              # Karnataka
 DESTINATION_OF_SUPPLY = "KA"
 MAIL_FROM = "abdul@evenflowbrands.com"  # summary mail after each batch, via Resend (domain must be verified there)
 MAIL_TO = "utsav@evenflowbrands.com"
-MAIL_TO_CC = "kiran.kulagod@evenflowbrands.com"
+MAIL_TO_CC = ["kiran.kulagod@evenflowbrands.com", "aveena.ml@evenflowbrands.com"]
 RTGS_FROM = 200000                              # Zoho/HSBC: RTGS from ₹2,00,000, NEFT below
 # No reference_number sent: Zoho fills in its own HSBC transaction reference when the payment is initiated.
 
@@ -165,7 +165,7 @@ def _mail_summary(results: list[dict]) -> None:
             "<tr><th>Vendor Name</th><th>Payment Number</th><th>UTR Number</th><th>Amount</th></tr>"
             f"{cells}</table>")
     try:
-        send_html(MAIL_FROM, MAIL_TO, f"Overview of Vendor Payment Initiated on ({today})", html, cc=[MAIL_TO_CC])
+        send_html(MAIL_FROM, MAIL_TO, f"Overview of Vendor Payment Initiated on ({today})", html, cc=MAIL_TO_CC)
     except Exception:
         logger.exception("Vendor payment summary mail failed")
 
