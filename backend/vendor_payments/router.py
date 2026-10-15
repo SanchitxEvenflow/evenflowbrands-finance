@@ -8,6 +8,7 @@ import sys
 import threading
 from collections import Counter
 from datetime import datetime
+from html import escape
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from pydantic import BaseModel, Field, field_validator
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import settings
+from email_sender import send_html  # importable via main.py adding backend/email to sys.path
 from zoho_client import ZOHO_API_BASE, zoho
 
 logger = logging.getLogger("vendor_payments")
@@ -28,6 +30,9 @@ PAID_THROUGH_ACCOUNT_ID = "727927000000014443"  # HSBC Bank Account
 OFFSET_ACCOUNT_ID = "727927000000014012"        # "Deposit To": Vendor advances
 LOCATION_ID = "727927000000014347"              # Karnataka
 DESTINATION_OF_SUPPLY = "KA"
+MAIL_FROM = "abdul@evenflowbrands.com"  # summary mail after each batch, via Resend (domain must be verified there)
+MAIL_TO = "utsav@evenflowbrands.com"
+MAIL_TO_CC = "kiran.kulagod@evenflowbrands.com"
 RTGS_FROM = 200000                              # Zoho/HSBC: RTGS from ₹2,00,000, NEFT below
 # No reference_number sent: Zoho fills in its own HSBC transaction reference when the payment is initiated.
 
@@ -146,6 +151,25 @@ def _online_payload(vendor: dict, row: PaymentRow, today: str, pin: str) -> dict
     }
 
 
+def _mail_summary(results: list[dict]) -> None:
+    """Mail the initiated payments, last CSV row first. A mail failure must never fail the batch: money already moved."""
+    ok = [r for r in reversed(results) if r["status"] == "ok"]
+    if not ok:
+        return
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y")
+    cells = "".join(
+        f"<tr><td>{escape(r['vendor_name'])}</td><td>{escape(r.get('payment_number') or '')}</td>"
+        f"<td>{escape(r.get('reference_number') or '')}</td><td style='text-align:right'>₹{r['amount']:,.2f}</td></tr>"
+        for r in ok)
+    html = ("<table border='1' cellpadding='6' style='border-collapse:collapse'>"
+            "<tr><th>Vendor Name</th><th>Payment Number</th><th>UTR Number</th><th>Amount</th></tr>"
+            f"{cells}</table>")
+    try:
+        send_html(MAIL_FROM, MAIL_TO, f"Overview of Vendor Payment Initiated on ({today})", html, cc=[MAIL_TO_CC])
+    except Exception:
+        logger.exception("Vendor payment summary mail failed")
+
+
 @router.post("/bulk", summary="Pay one vendor per row via HSBC (real money, Secret PIN once per batch)")
 def bulk(req: BulkPaymentRequest):
     global _wrong_pins
@@ -193,6 +217,7 @@ def bulk(req: BulkPaymentRequest):
             logger.info("Payment %s initiated to %s: %s (%s)", payment.get("payment_number"), row.vendor_name, row.amount, body.get("message"))
             results.append({**row.model_dump(), "status": "ok", "payment_number": payment.get("payment_number"),
                             "reference_number": payment.get("reference_number")})
+        _mail_summary(results)
         return {"results": results}
     finally:
         _send_lock.release()

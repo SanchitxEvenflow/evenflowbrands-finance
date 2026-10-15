@@ -79,3 +79,8 @@ def send_email_with_pdfs(
             logger.exception("Failed to send email %d/%d", i + 1, len(chunks))
 
     return emails_sent
+
+
+def send_html(from_email: str, to_email: str, subject: str, html: str, cc: list[str] | None = None) -> None:
+    resend.api_key = settings.resend_api_key
+    resend.Emails.send({"from": from_email, "to": [to_email], "cc": cc or [], "subject": subject, "html": html})

@@ -44,6 +44,22 @@ const downloadTemplate = () => {
   URL.revokeObjectURL(a.href);
 };
 
+const downloadResults = (results: Result[]) => {
+  const sheet = XLSX.utils.json_to_sheet(results.map((r) => ({
+    "Vendor Name": r.vendor_name,
+    Amount: r.amount,
+    Status: r.status,
+    "Payment Number": r.payment_number ?? "",
+    "UTR Number": r.reference_number ?? "",
+    Error: r.error ?? "",
+  })));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([XLSX.utils.sheet_to_csv(sheet)], { type: "text/csv" }));
+  a.download = `vendor_payments_results_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
 // Commas allowed only as real digit grouping (12,500 / 1,25,000 / 1,250,000), stripped before use.
 // Strict on placement so "12,50" (decimal comma) can't silently become 1250.
 const AMOUNT_RE = /^(\d+|\d{1,3}(,\d{2,3})*,\d{3})(\.\d{1,2})?$/;
@@ -273,10 +289,15 @@ export default function VendorPaymentsPage() {
 
         {results && (
           <div className="px-6 pb-6">
-            <h2 className="text-lg font-bold text-slate-800 mb-3">
-              Results — {results.filter((r) => r.status === "ok").length} initiated, {results.filter((r) => r.status === "failed").length} failed
-              {results.some((r) => r.status === "unknown") && `, ${results.filter((r) => r.status === "unknown").length} unknown`}
-            </h2>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-bold text-slate-800">
+                Results — {results.filter((r) => r.status === "ok").length} initiated, {results.filter((r) => r.status === "failed").length} failed
+                {results.some((r) => r.status === "unknown") && `, ${results.filter((r) => r.status === "unknown").length} unknown`}
+              </h2>
+              <button onClick={() => downloadResults(results)} className="text-indigo-600 font-semibold text-sm">
+                Export CSV
+              </button>
+            </div>
             <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full text-sm text-left">
                 <tbody className="divide-y divide-slate-100 text-slate-800">
