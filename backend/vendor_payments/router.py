@@ -83,8 +83,16 @@ def _zoho_json(method: str, path: str, params: dict | None = None, json: dict | 
     return body
 
 
+def _norm(name: str) -> str:
+    return " ".join(name.split()).casefold()
+
+
 def _vendor(name: str) -> dict:
-    found = _zoho_json("GET", "/contacts", {"contact_name": name, "contact_type": "vendor"})["contacts"]
+    # Zoho names often carry stray spaces ("RASHMI FABRICS (P)  LTD."), so an exact contact_name lookup misses them:
+    # search by the longest word, then compare names with whitespace collapsed.
+    found = _zoho_json("GET", "/contacts", {"contact_name_contains": max(name.split(), key=len),
+                                            "contact_type": "vendor", "per_page": 200})["contacts"]
+    found = [c for c in found if _norm(c["contact_name"]) == _norm(name)]
     contacts = [c for c in found if c.get("status") == "active"]
     if found and not contacts:
         raise RuntimeError(f"Vendor {name!r} is inactive in Zoho")
